@@ -10,7 +10,7 @@ st.set_page_config(page_title="Should Cost - IA", page_icon="🚛", layout="wide
 
 # --- 2. CREDENCIAIS E LINKS ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
-LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1fx4Wo57AStcBe4CPlsNU7NvAQLw3rnApXJGmPwT58uI/edit?usp=sharing"
+LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
