@@ -4,7 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURAÇÕES INICIAIS (COLE AQUI SUAS CHAVES) ---
-CHAVE_API_GEMINI = "GEMINI_API_KEY"
+CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1fx4Wo57AStcBe4CPlsNU7NvAQLw3rnApXJGmPwT58uI/edit?usp=sharing"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
