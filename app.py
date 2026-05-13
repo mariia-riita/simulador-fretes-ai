@@ -20,7 +20,6 @@ st.markdown("Assistente inteligente alimentado pelo **Google Gemini** e integrad
 st.divider()
 
 # --- 3. LENDO DADOS DA PLANILHA PARA ENSINAR A IA ---
-# --- 3. LENDO DADOS DA PLANILHA PARA ENSINAR A IA ---
 @st.cache_data(ttl=600)
 def ler_base_sheets():
     escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -66,28 +65,77 @@ with aba_dashboard:
     st.subheader("📊 Acompanhamento de Rotas Ativas (OTM)")
     
     if not df_rotas_real.empty:
-        # Selecionando e renomeando as colunas chave para a visão do Alex
+        # 1. Remove espaços invisíveis de todos os cabeçalhos
+        df_rotas_real.columns = df_rotas_real.columns.str.strip()
+        
+        # --- MÁQUINA DE LIMPEZA FINANCEIRA ---
+        # Função para garantir que os valores virem números (mesmo que venham com R$, vírgulas ou vazios)
+        def limpar_moeda(coluna):
+            if pd.api.types.is_numeric_dtype(coluna):
+                return coluna.fillna(0)
+            return pd.to_numeric(
+                coluna.astype(str)
+                .str.replace(r'[R\$\s]', '', regex=True) # Tira o R$ e espaços
+                .str.replace(r'\.', '', regex=True)     # Tira o ponto de milhar
+                .str.replace(',', '.', regex=True),     # Troca a vírgula por ponto
+                errors='coerce'
+            ).fillna(0)
+
+        # 2. Puxa as colunas reais e cria a coluna somada se elas existirem
+        custo_base = limpar_moeda(df_rotas_real.get("CUSTO_BASE", pd.Series([0]*len(df_rotas_real))))
+        pedagio = limpar_moeda(df_rotas_real.get("PEDAGIO", pd.Series([0]*len(df_rotas_real))))
+        
+        # A MÁGICA DA SOMA AQUI:
+        df_rotas_real["CUSTO_CALCULADO"] = custo_base + pedagio
+        
+        # Formata o resultado para o padrão visual R$ 0.000,00
+        df_rotas_real["Custo Atual (R$)"] = df_rotas_real["CUSTO_CALCULADO"].apply(
+            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+        
+        # 3. Selecionando e renomeando as colunas chave
         colunas_visao = {
             "NOME_TRANSPORTADORA": "Transportadora",
             "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM": "Origem",
             "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO": "Destino",
             "DESCRICAO_GRUPO_DE_EQUIPAMENTO": "Veículo",
-            "VALOR_DE_CONTRATO": "Custo Atual (R$)",
+            "Custo Atual (R$)": "Custo Atual (R$)", # Agora puxamos a coluna que nós mesmos criamos!
             "DATA_DE_EXPIRACAO": "Validade"
         }
         
-        # Criamos um DataFrame apenas com o que queremos exibir
-        df_display = df_rotas_real[list(colunas_visao.keys())].rename(columns=colunas_visao)
+        # Filtra só as colunas que realmente existem para não dar erro
+        colunas_existentes = {k: v for k, v in colunas_visao.items() if k in df_rotas_real.columns}
+        df_display = df_rotas_real[list(colunas_existentes.keys())].rename(columns=colunas_existentes)
         
-        # Filtro rápido por Transportadora
-        transportadora_selecionada = st.multiselect("Filtrar por Transportadora:", options=df_display["Transportadora"].unique())
-        if transportadora_selecionada:
-            df_display = df_display[df_display["Transportadora"].isin(transportadora_selecionada)]
+        st.markdown("### 🎯 Resumo da Operação")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        qtd_rotas = len(df_display)
+        qtd_transportadoras = df_display["Transportadora"].nunique() if "Transportadora" in df_display.columns else 0
+        qtd_origens = df_display["Origem"].nunique() if "Origem" in df_display.columns else 0
+        
+        # Novo KPI Financeiro: Custo Médio por Viagem da Operação Inteira
+        custo_medio = df_rotas_real["CUSTO_CALCULADO"].mean()
+        custo_medio_formatado = f"R$ {custo_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        col1.metric("Total de Rotas Ativas", qtd_rotas)
+        col2.metric("Transportadoras", qtd_transportadoras)
+        col3.metric("Zonas de Origem", qtd_origens)
+        col4.metric("Custo Médio da Base", custo_medio_formatado) # Adicionei o KPI financeiro no último cartão!
+        
+        st.divider()
 
-        # Exibe a tabela real do OTM
+        # 4. Filtro rápido por Transportadora
+        if "Transportadora" in df_display.columns:
+            transportadora_selecionada = st.multiselect("Filtrar por Transportadora:", options=df_display["Transportadora"].unique())
+            if transportadora_selecionada:
+                df_display = df_display[df_display["Transportadora"].isin(transportadora_selecionada)]
+
+        # 5. Exibe a tabela na tela
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-        # Botão de Download (Aqui baixamos a tabela COMPLETA com todas as colunas do OTM)
+        # 6. Botão de Download (Baixa a base completa do OTM + Nossa coluna calculada)
         csv = df_rotas_real.to_csv(index=False, sep=';').encode('utf-8-sig')
         st.download_button(
             label="📥 Exportar Base Completa (OTM + Custos)",
@@ -97,30 +145,6 @@ with aba_dashboard:
         )
     else:
         st.warning("Nenhuma rota encontrada na aba 'Rotas_Ativas'.")
-    st.write("Visão geral das rotas atualmente monitoradas pelo sistema.")
-
-    # Exemplo de tabela (No futuro, vamos puxar isso do Google Sheets)
-    dados_exemplo = {
-        "ID Rota": ["R-001", "R-002", "R-003"],
-        "Origem -> Destino": ["Cajamar/SP -> Rio de Janeiro/RJ", "Benevides/PA -> Recife/PE", "Cajamar/SP -> Curitiba/PR"],
-        "Veículo Padrão": ["VOLVO/FH 540", "SCANIA/R540", "DAF XF FT480"],
-        "Distância (km)": [430, 2100, 400],
-        "Custo Atual Estimado": ["R$ 3.200,00", "R$ 15.400,00", "R$ 2.950,00"]
-    }
-    df_rotas = pd.DataFrame(dados_exemplo)
-
-    # Mostra a tabela de forma interativa na tela
-    st.dataframe(df_rotas, use_container_width=True, hide_index=True)
-
-    # O Botão Mágico de Download
-    csv = df_rotas.to_csv(index=False, sep=';').encode('utf-8-sig')
-    st.download_button(
-        label="📥 Fazer Download (Excel/CSV)",
-        data=csv,
-        file_name="rotas_ativas_natura.csv",
-        mime="text/csv",
-    )
-
 # ==========================================
 # ABA 2: O SEU AGENTE DE IA (CHAT)
 # ==========================================
