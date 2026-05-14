@@ -53,14 +53,6 @@ def formatar_brl(valor):
     """Formata número para string R$ 1.234,56"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def rodar_automacao_completa():
-    """Baixa dados da ANP, FIPE e ANTT e salva no Sheets"""
-    escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(cred_dict, escopos)
-    cliente = gspread.authorize(credenciais)
-    planilha = cliente.open_by_url(LINK_PLANILHA)
-
 # --- ANP ---
     url_anp = "https://www.gov.br/anp/pt-br/assuntos/precos-e-custos-operacionais/precos-revenda-e-de-distribuicao-de-combustiveis/shlp/semanal/semanal-estados-desde-2013.xlsx"
     
@@ -131,12 +123,15 @@ st.title("🚛 Inteligência de Fretes - Natura")
 # Sidebar com Botão de Sincronização
 with st.sidebar:
     st.header("⚙️ Controle")
-    if st.button("🔄 Sincronizar Bases Agora"):
-        with st.spinner("Atualizando ANP/FIPE/ANTT..."):
-            if rodar_automacao_completa():
-                st.cache_data.clear()
-                st.success("Bases Atualizadas!")
-                st.rerun()
+    st.markdown("Clique abaixo se a planilha base foi atualizada recentemente.")
+    
+    # O botão agora apenas limpa o cache e puxa os dados fresquinhos do Sheets
+    if st.button("🔄 Atualizar Painel de Dados"):
+        with st.spinner("Buscando dados mais recentes da planilha..."):
+            st.cache_data.clear() # A mágica que apaga a memória antiga
+            st.success("Painel atualizado com sucesso!")
+            time.sleep(1)
+            st.rerun()
 
 # Carregamento Inicial
 try:
