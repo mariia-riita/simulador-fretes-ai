@@ -61,26 +61,24 @@ def rodar_automacao_completa():
     cliente = gspread.authorize(credenciais)
     planilha = cliente.open_by_url(LINK_PLANILHA)
 
-    # --- ANP ---
+# --- ANP ---
     url_anp = "https://www.gov.br/anp/pt-br/assuntos/precos-e-custos-operacionais/precos-revenda-e-de-distribuicao-de-combustiveis/shlp/semanal/semanal-estados-desde-2013.xlsx"
-    resp = requests.get(url_anp, verify=False)
+    
+    # 1. Colocamos uma "máscara" no robô para o governo não bloquear
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    resp = requests.get(url_anp, headers=headers, verify=False, timeout=20)
+    
+    # 2. Trava de Segurança: Verifica se o arquivo é um Excel mesmo ou se o governo deu erro
+    if resp.status_code != 200 or b"<html" in resp.content[:500].lower():
+        st.error("⚠️ O site do Governo (ANP) bloqueou o download ou o link da planilha mudou. Tente novamente mais tarde.")
+        return False
+        
+    # 3. Lê o Excel em segurança
     df_anp_raw = pd.read_excel(BytesIO(resp.content), skiprows=9)
     df_anp_raw.columns = df_anp_raw.columns.astype(str).str.strip().str.upper()
-    
-    col_prod = next(c for c in df_anp_raw.columns if 'PRODUTO' in c)
-    col_est = next(c for c in df_anp_raw.columns if 'ESTADO' in c)
-    col_pre = next(c for c in df_anp_raw.columns if 'REVENDA' in c)
-    
-    df_s10 = df_anp_raw[df_anp_raw[col_prod].str.contains('DIESEL S10', na=False)].copy()
-    df_s10[col_pre] = pd.to_numeric(df_s10[col_pre], errors='coerce')
-    df_anp_final = df_s10.groupby(col_est)[col_pre].mean().reset_index()
-    
-    df_anp_final['Estado_Limpo'] = df_anp_final[col_est].str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
-    df_anp_final['Sigla'] = df_anp_final['Estado_Limpo'].map(lambda x: mapa_estados.get(x, ['', '', ''])[0])
-    df_anp_final['Capital'] = df_anp_final['Estado_Limpo'].map(lambda x: mapa_estados.get(x, ['', '', ''])[1])
-    df_anp_final['Região'] = df_anp_final['Estado_Limpo'].map(lambda x: mapa_estados.get(x, ['', '', ''])[2])
-    df_anp_final = df_anp_final[['Sigla', col_est, 'Capital', 'Região', col_pre]].rename(columns={col_pre: 'Preço Diesel S10'})
-
     # --- FIPE ---
     frota = {"VOLVO/FH 540": "516213-0", "DAF XF FT480": "530014-2", "VOLVO/FH 460": "516171-1", "SCANIA/R540": "513308-4"}
     dados_fipe = []
