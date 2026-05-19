@@ -52,6 +52,19 @@ def limpar_moeda(coluna):
 def formatar_brl(valor):
     """Formata número para string R$ 1.234,56"""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def formatar_kpi_brl(valor):
+    """Formata números gigantes para milhares (mil), milhões (Mi) ou bilhões (Bi)"""
+    if pd.isna(valor) or valor == 0:
+        return "R$ 0,00"
+        
+    if valor >= 1_000_000_000:
+        return f"R$ {valor / 1_000_000_000:.2f} Bi".replace(".", ",")
+    elif valor >= 1_000_000:
+        return f"R$ {valor / 1_000_000:.2f} Mi".replace(".", ",")
+    elif valor >= 1_000:
+        return f"R$ {valor / 1_000:.2f} mil".replace(".", ",")
+    else:
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # --- ANP ---
     url_anp = "https://www.gov.br/anp/pt-br/assuntos/precos-e-custos-operacionais/precos-revenda-e-de-distribuicao-de-combustiveis/shlp/semanal/semanal-estados-desde-2013.xlsx"
@@ -156,8 +169,8 @@ with aba_dash:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Rotas Ativas", len(df_rotas))
         col2.metric("Transportadoras", df_rotas["NOME_TRANSPORTADORA"].nunique() if "NOME_TRANSPORTADORA" in df_rotas.columns else 0)
-        col3.metric("Custo Médio", formatar_brl(df_rotas["CUSTO_TOTAL"].mean()))
-        col4.metric("Total Fretes", formatar_brl(df_rotas["CUSTO_TOTAL"].sum()))
+        col3.metric("Custo Médio", formatar_kpi_brl(df_rotas["CUSTO_TOTAL"].mean()))
+        col4.metric("Total Fretes", formatar_kpi_brl(df_rotas["CUSTO_TOTAL"].sum()))
 
         # Tabela
         df_view = df_rotas.copy()
