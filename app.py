@@ -4,9 +4,9 @@ import gspread
 import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import requests
 import time
-from io import BytesIO
+from datetime import datetime
+import pydeck as pdk
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide")
@@ -17,28 +17,9 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11v
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
-# Dicionário Geográfico para a ANP
-mapa_estados = {
-    'ACRE': ['AC', 'Rio Branco', 'Norte'], 'ALAGOAS': ['AL', 'Maceió', 'Nordeste'],
-    'AMAPA': ['AP', 'Macapá', 'Norte'], 'AMAZONAS': ['AM', 'Manaus', 'Norte'],
-    'BAHIA': ['BA', 'Salvador', 'Nordeste'], 'CEARA': ['CE', 'Fortaleza', 'Nordeste'],
-    'DISTRITO FEDERAL': ['DF', 'Brasília', 'Centro-Oeste'], 'ESPIRITO SANTO': ['ES', 'Vitória', 'Sudeste'],
-    'GOIAS': ['GO', 'Goiânia', 'Centro-Oeste'], 'MARANHAO': ['MA', 'São Luís', 'Nordeste'],
-    'MATO GROSSO': ['MT', 'Cuiabá', 'Centro-Oeste'], 'MATO GROSSO DO SUL': ['MS', 'Campo Grande', 'Centro-Oeste'],
-    'MINAS GERAIS': ['MG', 'Belo Horizonte', 'Sudeste'], 'PARA': ['PA', 'Belém', 'Norte'],
-    'PARAIBA': ['PB', 'João Pessoa', 'Nordeste'], 'PERNAMBUCO': ['PE', 'Recife', 'Nordeste'],
-    'PIAUI': ['PI', 'Teresina', 'Nordeste'], 'PARANA': ['PR', 'Curitiba', 'Sul'],
-    'RIO DE JANEIRO': ['RJ', 'Rio de Janeiro', 'Sudeste'], 'RIO GRANDE DO NORTE': ['RN', 'Natal', 'Nordeste'],
-    'RIO GRANDE DO SUL': ['RS', 'Porto Alegre', 'Sul'], 'RONDONIA': ['RO', 'Porto Velho', 'Norte'],
-    'RORAIMA': ['RR', 'Boa Vista', 'Norte'], 'SANTA CATARINA': ['SC', 'Florianópolis', 'Sul'],
-    'SAO PAULO': ['SP', 'São Paulo', 'Sudeste'], 'SERGIPE': ['SE', 'Aracaju', 'Nordeste'],
-    'TOCANTINS': ['TO', 'Palmas', 'Norte']
-}
-
-# --- 3. FUNÇÕES DO MOTOR DE AUTOMAÇÃO (OPÇÃO 2 - NUVEM) ---
-
+# --- 3. FUNÇÕES AUXILIARES E DE BANCO DE DADOS ---
 def limpar_moeda(coluna):
-    """Converte strings de moeda (R$ 1.200,00) para números flutuantes"""
+    """Converte strings de moeda ou números sujos para float puro"""
     if pd.api.types.is_numeric_dtype(coluna):
         return coluna.fillna(0)
     return pd.to_numeric(
@@ -49,68 +30,41 @@ def limpar_moeda(coluna):
         errors='coerce'
     ).fillna(0)
 
-def formatar_brl(valor):
-    """Formata número para string R$ 1.234,56"""
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 def formatar_kpi_brl(valor):
     """Formata números gigantes para milhares (mil), milhões (Mi) ou bilhões (Bi)"""
-    if pd.isna(valor) or valor == 0:
-        return "R$ 0,00"
-        
-    if valor >= 1_000_000_000:
-        return f"R$ {valor / 1_000_000_000:.2f} Bi".replace(".", ",")
-    elif valor >= 1_000_000:
-        return f"R$ {valor / 1_000_000:.2f} Mi".replace(".", ",")
-    elif valor >= 1_000:
-        return f"R$ {valor / 1_000:.2f} mil".replace(".", ",")
-    else:
-        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    if pd.isna(valor) or valor == 0: return "R$ 0,00"
+    if valor >= 1_000_000_000: return f"R$ {valor / 1_000_000_000:.2f} Bi".replace(".", ",")
+    elif valor >= 1_000_000: return f"R$ {valor / 1_000_000:.2f} Mi".replace(".", ",")
+    elif valor >= 1_000: return f"R$ {valor / 1_000:.2f} mil".replace(".", ",")
+    else: return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- ANP ---
-    url_anp = "https://www.gov.br/anp/pt-br/assuntos/precos-e-custos-operacionais/precos-revenda-e-de-distribuicao-de-combustiveis/shlp/semanal/semanal-estados-desde-2013.xlsx"
-    
-    # 1. Colocamos uma "máscara" no robô para o governo não bloquear
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    resp = requests.get(url_anp, headers=headers, verify=False, timeout=20)
-    
-    # 2. Trava de Segurança: Verifica se o arquivo é um Excel mesmo ou se o governo deu erro
-    if resp.status_code != 200 or b"<html" in resp.content[:500].lower():
-        st.error("⚠️ O site do Governo (ANP) bloqueou o download ou o link da planilha mudou. Tente novamente mais tarde.")
-        return False
+def limpar_coordenada(coord):
+    """Converte coordenadas com vírgula para padrão de mapas (ponto)"""
+    if pd.isna(coord) or coord == "": return None
+    try:
+        return float(str(coord).replace('"', '').replace(',', '.'))
+    except:
+        return None
+
+def salvar_historico_ia(pergunta, resposta):
+    """Grava as perguntas e simulações do Agente em uma aba de Histórico"""
+    try:
+        escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        credenciais = ServiceAccountCredentials.from_json_keyfile_dict(cred_dict, escopos)
+        cliente = gspread.authorize(credenciais)
+        planilha = cliente.open_by_url(LINK_PLANILHA)
         
-    # 3. Lê o Excel em segurança
-    df_anp_raw = pd.read_excel(BytesIO(resp.content), skiprows=9)
-    df_anp_raw.columns = df_anp_raw.columns.astype(str).str.strip().str.upper()
-    # --- FIPE ---
-    frota = {"VOLVO/FH 540": "516213-0", "DAF XF FT480": "530014-2", "VOLVO/FH 460": "516171-1", "SCANIA/R540": "513308-4"}
-    dados_fipe = []
-    for mod, cod in frota.items():
         try:
-            r = requests.get(f"https://fipe.parallelum.com.br/api/v2/trucks/{cod}/years", timeout=10).json()
-            p = requests.get(f"https://fipe.parallelum.com.br/api/v2/trucks/{cod}/years/{r[0]['code']}", timeout=10).json()
-            dados_fipe.append([mod, p['price']])
-        except: dados_fipe.append([mod, "Erro"])
-    df_fipe = pd.DataFrame(dados_fipe, columns=['Modelo Veículo', 'Preço Veículo'])
-
-    # --- ANTT ---
-    dados_antt = [
-        ['Carga Geral', 2, 4.0031, 436.39], ['Carga Geral', 3, 5.1295, 523.33],
-        ['Carga Geral', 4, 5.8178, 568.72], ['Carga Geral', 5, 6.7126, 635.08],
-        ['Carga Geral', 6, 7.4124, 648.95], ['Carga Geral', 7, 8.1252, 803.22],
-        ['Carga Geral', 9, 9.2466, 872.44]
-    ]
-    df_antt = pd.DataFrame(dados_antt, columns=['Tipo de Carga', 'Eixos', 'CCD (R$/km)', 'CC (R$/viagem)'])
-
-    # Salvar no Sheets
-    for nome, df in [("Apoio_ANP", df_anp_final), ("Apoio_FIPE", df_fipe), ("Apoio_ANTT", df_antt)]:
-        aba = planilha.worksheet(nome)
-        aba.clear()
-        aba.update([df.columns.values.tolist()] + df.values.tolist())
-    
-    return True
+            aba_hist = planilha.worksheet("Historico_Simulacoes")
+        except:
+            aba_hist = planilha.add_worksheet(title="Historico_Simulacoes", rows="1000", cols="3")
+            aba_hist.append_row(["Data/Hora", "Pergunta do Usuário", "Resposta do Agente IA"])
+            
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        aba_hist.append_row([data_atual, pergunta, resposta])
+    except Exception as e:
+        print(f"Erro ao salvar histórico: {e}")
 
 # --- 4. CARREGAMENTO DE DADOS (CACHE) ---
 @st.cache_data(ttl=600)
@@ -133,20 +87,18 @@ def ler_base_sheets():
 # --- 5. INTERFACE DO USUÁRIO ---
 st.title("🚛 Inteligência de Fretes - Natura")
 
-# Sidebar com Botão de Sincronização
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Controle")
     st.markdown("Clique abaixo se a planilha base foi atualizada recentemente.")
-    
-    # O botão agora apenas limpa o cache e puxa os dados fresquinhos do Sheets
     if st.button("🔄 Atualizar Painel de Dados"):
         with st.spinner("Buscando dados mais recentes da planilha..."):
-            st.cache_data.clear() # A mágica que apaga a memória antiga
+            st.cache_data.clear()
             st.success("Painel atualizado com sucesso!")
             time.sleep(1)
             st.rerun()
 
-# Carregamento Inicial
+# Carregando Dados
 try:
     dados_carregados = ler_base_sheets()
     contexto_ia = dados_carregados["contexto"]
@@ -156,49 +108,107 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     contexto_ia = ""
 
-aba_dash, aba_ia = st.tabs(["📊 Rotas Ativas (OTM)", "🤖 Agente de Simulação"])
-
-with aba_dash:
-    if not df_rotas.empty:
-        df_rotas.columns = df_rotas.columns.str.strip()
-        base = limpar_moeda(df_rotas.get("CUSTO_BASE", pd.Series([0]*len(df_rotas))))
-        pedagio = limpar_moeda(df_rotas.get("PEDAGIO", pd.Series([0]*len(df_rotas))))
-        df_rotas["CUSTO_TOTAL"] = base + pedagio
-        
-        # KPIs
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Rotas Ativas", len(df_rotas))
-        col2.metric("Transportadoras", df_rotas["NOME_TRANSPORTADORA"].nunique() if "NOME_TRANSPORTADORA" in df_rotas.columns else 0)
-        col3.metric("Custo Médio", formatar_kpi_brl(df_rotas["CUSTO_TOTAL"].mean()))
-        col4.metric("Total Fretes", formatar_kpi_brl(df_rotas["CUSTO_TOTAL"].sum()))
-
-        # Tabela
-        df_view = df_rotas.copy()
-        df_view["Custo Atual"] = df_view["CUSTO_TOTAL"].apply(formatar_brl)
-        st.dataframe(df_view[["NOME_TRANSPORTADORA", "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM", "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO", "Custo Atual"]], use_container_width=True)
-    else:
-        st.info("Aba Rotas_Ativas vazia ou inacessível.")
-
-with aba_ia:
-    instrucao = f"""Você é um Engenheiro de Logística Sênior da Natura. Calcule o 'Should Cost' e compare com o 'Piso ANTT'.
-    REGRAS: 1. Custo Real: Diesel (ANP) + 5% Lubrificante + Fixos (IPVA 1% FIPE/12, Seguro 2.5%/12) + 10% Margem.
-    2. ANTT: (Distância * CCD) + CC da aba Apoio_ANTT.
-    DADOS: {contexto_ia}"""
+if not df_rotas.empty:
+    df_rotas.columns = df_rotas.columns.str.strip()
     
-    if "chat" not in st.session_state:
-        st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
-        st.session_state.msgs = []
+    # --- PROCESSAMENTO FINANCEIRO E PONDERADO ---
+    base = limpar_moeda(df_rotas.get("CUSTO_BASE", pd.Series([0]*len(df_rotas))))
+    pedagio = limpar_moeda(df_rotas.get("PEDAGIO", pd.Series([0]*len(df_rotas))))
+    volume = limpar_moeda(df_rotas.get("Vol", pd.Series([1]*len(df_rotas)))).replace(0, 1) 
+    
+    df_rotas["CUSTO_TOTAL"] = base + pedagio
+    df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
+    
+    # Cálculo do Frete Mínimo
+    kms = limpar_moeda(df_rotas.get("KM's Conferidos", pd.Series([0]*len(df_rotas))))
+    r_km = limpar_moeda(df_rotas.get("R$/KM", pd.Series([0]*len(df_rotas))))
+    cc = limpar_moeda(df_rotas.get("CC", pd.Series([0]*len(df_rotas))))
+    df_rotas["FRETE_MINIMO_CALC"] = (kms * r_km) + cc
 
-    for m in st.session_state.msgs:
-        with st.chat_message(m["role"]): st.markdown(m["content"])
+    # --- KPIs NO TOPO ---
+    st.markdown("### 🎯 Resumo da Operação (Ponderado por Volume)")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_rotas = len(df_rotas)
+    total_volume = volume.sum()
+    total_fretes = df_rotas["Custo_Total_Ponderado"].sum()
+    custo_medio_real = total_fretes / total_volume if total_volume > 0 else 0
+    
+    col1.metric("Rotas Ativas", total_rotas)
+    col2.metric("Volume Total", f"{total_volume:,.0f}".replace(",", "."))
+    col3.metric("Custo Médio Real", formatar_kpi_brl(custo_medio_real))
+    col4.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
 
-    pergunta = st.chat_input("Ex: Qual o custo de Cajamar para Recife?")
-    if pergunta:
-        st.chat_message("user").markdown(pergunta)
-        st.session_state.msgs.append({"role": "user", "content": pergunta})
-        with st.chat_message("assistant"):
-            try:
-                res = st.session_state.chat.send_message(pergunta).text
-                st.markdown(res)
-                st.session_state.msgs.append({"role": "assistant", "content": res})
-            except Exception as e: st.error(f"Erro na IA: {e}")
+    st.divider()
+
+    # --- LAYOUT LADO A LADO ---
+    col_grafico, col_chat = st.columns([1.2, 1])
+
+    with col_grafico:
+        aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
+        
+        with aba_barras:
+            if "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM" in df_rotas.columns:
+                df_chart = df_rotas.groupby("DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM")["Custo_Total_Ponderado"].sum().reset_index()
+                df_chart = df_chart.rename(columns={"DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM": "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+            else:
+                st.info("Coluna de Origem não encontrada.")
+
+        with aba_mapa:
+            df_rotas['lat_origem'] = df_rotas.get('Latitude Origem', pd.Series()).apply(limpar_coordenada)
+            df_rotas['lon_origem'] = df_rotas.get('Longitude Origem', pd.Series()).apply(limpar_coordenada)
+            df_rotas['lat_destino'] = df_rotas.get('Latitude Destino', pd.Series()).apply(limpar_coordenada)
+            df_rotas['lon_destino'] = df_rotas.get('Longitude Destino', pd.Series()).apply(limpar_coordenada)
+            
+            df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
+            
+            if not df_mapa.empty:
+                camada_arcos = pdk.Layer(
+                    "ArcLayer",
+                    data=df_mapa,
+                    get_source_position=["lon_origem", "lat_origem"],
+                    get_target_position=["lon_destino", "lat_destino"],
+                    get_source_color=[255, 140, 0, 160], 
+                    get_target_color=[0, 200, 255, 160], 
+                    get_width=3,
+                    pickable=True,
+                )
+                visao_inicial = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
+                st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao_inicial, map_style="mapbox://styles/mapbox/dark-v10"))
+            else:
+                st.warning("Sem coordenadas válidas para o mapa.")
+
+    with col_chat:
+        st.subheader("🤖 Agente Especialista")
+        instrucao = f"""Você é um Engenheiro de Logística Sênior da Natura. 
+        Calcule o 'Should Cost' e compare com o 'Piso ANTT'.
+        REGRAS: 1. Custo Real: Diesel (ANP) + 5% Lubrificante + Fixos (IPVA 1% FIPE/12, Seguro 2.5%/12) + 10% Margem.
+        2. ANTT: (Distância * CCD) + CC da aba Apoio_ANTT.
+        DADOS DE CONSULTA: {contexto_ia}"""
+        
+        if "chat" not in st.session_state:
+            st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
+            st.session_state.msgs = []
+
+        for m in st.session_state.msgs:
+            with st.chat_message(m["role"]): st.markdown(m["content"])
+
+        pergunta = st.chat_input("Pergunte ao Agente...")
+        if pergunta:
+            st.chat_message("user").markdown(pergunta)
+            st.session_state.msgs.append({"role": "user", "content": pergunta})
+            
+            with st.chat_message("assistant"):
+                try:
+                    with st.spinner("Calculando..."):
+                        res = st.session_state.chat.send_message(pergunta).text
+                    st.markdown(res)
+                    st.session_state.msgs.append({"role": "assistant", "content": res})
+                    
+                    # Salva a conversa na planilha!
+                    salvar_historico_ia(pergunta, res)
+                except Exception as e: 
+                    st.error(f"Erro na IA: {e}")
+else:
+    st.info("Aba Rotas_Ativas vazia ou inacessível.")
