@@ -145,39 +145,51 @@ if not df_rotas.empty:
     col_grafico, col_chat = st.columns([1.2, 1])
 
     with col_grafico:
-        aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
-        
-        with aba_barras:
-            if "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM" in df_rotas.columns:
-                df_chart = df_rotas.groupby("DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM")["Custo_Total_Ponderado"].sum().reset_index()
-                df_chart = df_chart.rename(columns={"DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM": "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
-                st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
-            else:
-                st.info("Coluna de Origem não encontrada.")
+            aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
+            
+            with aba_barras:
+                if "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM" in df_rotas.columns:
+                    df_chart = df_rotas.groupby("DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM")["Custo_Total_Ponderado"].sum().reset_index()
+                    df_chart = df_chart.rename(columns={"DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM": "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                else:
+                    st.info("Coluna de Origem não encontrada.")
 
-        with aba_mapa:
-            df_rotas['lat_origem'] = df_rotas.get('Latitude Origem', pd.Series()).apply(limpar_coordenada)
-            df_rotas['lon_origem'] = df_rotas.get('Longitude Origem', pd.Series()).apply(limpar_coordenada)
-            df_rotas['lat_destino'] = df_rotas.get('Latitude Destino', pd.Series()).apply(limpar_coordenada)
-            df_rotas['lon_destino'] = df_rotas.get('Longitude Destino', pd.Series()).apply(limpar_coordenada)
-            
-            df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
-            
-            if not df_mapa.empty:
-                camada_arcos = pdk.Layer(
-                    "ArcLayer",
-                    data=df_mapa,
-                    get_source_position=["lon_origem", "lat_origem"],
-                    get_target_position=["lon_destino", "lat_destino"],
-                    get_source_color=[255, 140, 0, 160], 
-                    get_target_color=[0, 200, 255, 160], 
-                    get_width=3,
-                    pickable=True,
-                )
-                visao_inicial = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
-                st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao_inicial, map_style="mapbox://styles/mapbox/dark-v10"))
-            else:
-                st.warning("Sem coordenadas válidas para o mapa.")
+            with aba_mapa:
+                # RADAR DE COORDENADAS: Procura as colunas ignorando espaços e letras maiúsculas/minúsculas
+                col_lat_o = next((c for c in df_rotas.columns if 'LATITUDE ORIGEM' in str(c).upper()), None)
+                col_lon_o = next((c for c in df_rotas.columns if 'LONGITUDE ORIGEM' in str(c).upper()), None)
+                col_lat_d = next((c for c in df_rotas.columns if 'LATITUDE DESTINO' in str(c).upper()), None)
+                col_lon_d = next((c for c in df_rotas.columns if 'LONGITUDE DESTINO' in str(c).upper()), None)
+                
+                # Se achou as 4 colunas necessárias, tenta desenhar o mapa
+                if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
+                    df_rotas['lat_origem'] = df_rotas[col_lat_o].apply(limpar_coordenada)
+                    df_rotas['lon_origem'] = df_rotas[col_lon_o].apply(limpar_coordenada)
+                    df_rotas['lat_destino'] = df_rotas[col_lat_d].apply(limpar_coordenada)
+                    df_rotas['lon_destino'] = df_rotas[col_lon_d].apply(limpar_coordenada)
+                    
+                    df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
+                    
+                    if not df_mapa.empty:
+                        camada_arcos = pdk.Layer(
+                            "ArcLayer",
+                            data=df_mapa,
+                            get_source_position=["lon_origem", "lat_origem"],
+                            get_target_position=["lon_destino", "lat_destino"],
+                            get_source_color=[255, 140, 0, 160], # Laranja
+                            get_target_color=[0, 200, 255, 160], # Azul
+                            get_width=3,
+                            pickable=True,
+                        )
+                        visao_inicial = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
+                        st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao_inicial, map_style="mapbox://styles/mapbox/dark-v10"))
+                    else:
+                        st.warning("⚠️ Encontrei as colunas, mas os números parecem estar vazios ou inválidos.")
+                else:
+                    # SE FALHAR, MOSTRA O NOME EXATO DAS COLUNAS PARA NÓS DESCOBRIRMOS O ERRO!
+                    st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
+                    st.info(f"Colunas que o robô está vendo agora: {', '.join(df_rotas.columns)}")
 
     with col_chat:
         st.subheader("🤖 Agente Especialista")
