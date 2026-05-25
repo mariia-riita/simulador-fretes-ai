@@ -50,7 +50,7 @@ def limpar_coordenada(coord):
         val = float(c_str)
         if val == 0.0: return None
         
-        # O Salva-vidas: Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
+        # Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
         while abs(val) > 180:
             val = val / 10.0
             
@@ -120,24 +120,27 @@ except Exception as e:
     df_rotas = pd.DataFrame()
 
 if not df_rotas.empty:
-    # Formata colunas para maiúsculo para busca inteligente
+    # Padroniza colunas para caixa alta e remove quebras de linha invisíveis
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
     
-    # BUSCA INTELIGENTE DE COLUNAS
+    # BUSCA INTELIGENTE DE COLUNAS FINANCEIRAS E OPERACIONAIS
     col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
     col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
+    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONSIDERADO' in c), None)
     col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
     col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
     
-    # Processamento de Custos
+    # Processamento dos valores com a inteligência de cascata (fallback)
     base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
     contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
+    frete_considerado = df_rotas[col_frete].apply(limpar_numero_br) if col_frete else pd.Series([0.0]*len(df_rotas))
     pedagio = df_rotas[col_pedagio].apply(limpar_numero_br) if col_pedagio else pd.Series([0.0]*len(df_rotas))
     volume = df_rotas[col_vol].apply(limpar_numero_br) if col_vol else pd.Series([1.0]*len(df_rotas))
     volume = volume.apply(lambda x: 1.0 if x == 0 else x)
     
-    # Se CUSTO BASE estiver zerado, usa o VALOR DE CONTRATO
+    # Roda a regra em cascata para garantir que o custo real da linha seja capturado
     base = base.where(base > 0, contrato)
+    base = base.where(base > 0, frete_considerado)
     
     df_rotas["CUSTO_TOTAL"] = base + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
@@ -163,18 +166,19 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
+        # CAPTURA AS COLUNAS CORRETAS APÓS A SUA ATUALIZAÇÃO NO SHEETS
+        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c or 'LOCAL-UF' in c), None)
+        if not col_origem: col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
+        
         with aba_barras:
-            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c and ('ZONA' in c or 'DESCRI' in c)), None)
-            if not col_origem: col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
-            
-            if col_origem:
+            if col_origem and col_origem in df_rotas.columns:
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
                 if not df_chart.empty:
                     df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
                     st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
                 else:
-                    st.warning("Valores de custo vieram zerados da base.")
+                    st.warning("⚠️ Os valores de custo calculados vieram zerados. Verifique as colunas de valores da planilha.")
             else:
                 st.info("Coluna de Origem não encontrada.")
 
@@ -193,19 +197,19 @@ if not df_rotas.empty:
                 df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
                 
                 if not df_mapa.empty:
-                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas no mapa.")
+                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa de arcos.")
                     camada_arcos = pdk.Layer(
                         "ArcLayer", data=df_mapa,
                         get_source_position=["lon_origem", "lat_origem"],
                         get_target_position=["lon_destino", "lat_destino"],
-                        get_source_color=[255, 140, 0, 160], 
-                        get_target_color=[0, 200, 255, 160], 
+                        get_source_color=[255, 140, 0, 160], # Laranja Natura
+                        get_target_color=[0, 200, 255, 160], # Azul Destino
                         get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
                     st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style="mapbox://styles/mapbox/dark-v10"))
                 else:
-                    st.warning("⚠️ Coordenadas inválidas após limpeza.")
+                    st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
