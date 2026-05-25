@@ -167,7 +167,7 @@ if not df_rotas.empty:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
         # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
-        col_origem = next((c for c in df_rotas.columns if 'LOCAL' in c and 'UF' in c), None)
+        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c and 'LOCAL - UF' in c), None)
         if not col_origem: 
             col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
         
