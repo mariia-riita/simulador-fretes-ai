@@ -166,8 +166,10 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
-        col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c or 'Local - UF' in c), None)
-        if not col_origem: col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c), None)
+        # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
+        col_origem = next((c for c in df_rotas.columns if 'LOCAL' in c and 'UF' in c), None)
+        if not col_origem: 
+            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
         
         with aba_barras:
             if col_origem and col_origem in df_rotas.columns:
@@ -179,7 +181,7 @@ if not df_rotas.empty:
                 else:
                     st.warning("⚠️ Os valores de custo calculados vieram zerados. Verifique as colunas de valores da planilha.")
             else:
-                st.info("Coluna de Origem não encontrada.")
+                st.info("Coluna de Origem não encontrada. Colunas disponíveis: " + ", ".join(df_rotas.columns))
 
         with aba_mapa:
             col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
@@ -206,7 +208,9 @@ if not df_rotas.empty:
                         get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
-                    st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style="road"))
+                    
+                    # CORREÇÃO 2: map_style=None força o Streamlit a usar o mapa base gratuito!
+                    st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style=None))
                 else:
                     st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
