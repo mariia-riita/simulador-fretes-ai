@@ -166,8 +166,8 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
-        col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c or 'Local-UF' in c), None)
-        if not col_origem: col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
+        col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c or 'Local - UF' in c), None)
+        if not col_origem: col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c), None)
         
         with aba_barras:
             if col_origem and col_origem in df_rotas.columns:
