@@ -19,15 +19,12 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 
 # --- 3. MÁQUINAS DE LIMPEZA DE DADOS (À PROVA DE BALAS) ---
 def limpar_numero_br(valor):
-    """Lê R$, pontos, vírgulas e aspas e converte para número puro (Float)"""
+    """Converte valores financeiros para float, lidando com formatações malucas"""
     if pd.isna(valor): return 0.0
     v_str = str(valor).strip().upper()
     if v_str in ['', 'NAN', 'NULL', 'NONE']: return 0.0
     
-    # Limpa sujeiras visuais
     v_str = v_str.replace('R$', '').replace('$', '').replace(' ', '').replace('"', '')
-    
-    # Resolve o problema de 1.500,50 vs 1500.50
     if '.' in v_str and ',' in v_str:
         v_str = v_str.replace('.', '').replace(',', '.')
     elif ',' in v_str:
@@ -39,17 +36,25 @@ def limpar_numero_br(valor):
         return 0.0
 
 def limpar_coordenada(coord):
-    """Limpa coordenadas para o Mapa (ex: -23,123 vira -23.123)"""
+    """Recupera coordenadas mesmo se o Excel tiver engolido a vírgula"""
     if pd.isna(coord): return None
-    c_str = str(coord).replace('"', '').replace(' ', '').strip()
+    c_str = str(coord).strip().replace('"', '').replace(' ', '')
     if not c_str or c_str.upper() in ['NAN', 'NULL', 'NONE']: return None
     
-    if ',' in c_str:
+    if '.' in c_str and ',' in c_str:
+        c_str = c_str.replace('.', '').replace(',', '.')
+    elif ',' in c_str:
         c_str = c_str.replace(',', '.')
+        
     try:
-        coord_float = float(c_str)
-        if coord_float == 0.0: return None # Proteção contra coords vazias no OTM
-        return coord_float
+        val = float(c_str)
+        if val == 0.0: return None
+        
+        # O Salva-vidas: Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
+        while abs(val) > 180:
+            val = val / 10.0
+            
+        return val
     except:
         return None
 
@@ -68,18 +73,16 @@ def salvar_historico_ia(pergunta, resposta):
         cliente = gspread.authorize(credenciais)
         planilha = cliente.open_by_url(LINK_PLANILHA)
         
-        try:
-            aba_hist = planilha.worksheet("Historico_Simulacoes")
+        try: aba_hist = planilha.worksheet("Historico_Simulacoes")
         except:
             aba_hist = planilha.add_worksheet(title="Historico_Simulacoes", rows="1000", cols="3")
             aba_hist.append_row(["Data/Hora", "Pergunta do Usuário", "Resposta do Agente IA"])
             
-        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        aba_hist.append_row([data_atual, pergunta, resposta])
+        aba_hist.append_row([datetime.now().strftime("%d/%m/%Y %H:%M:%S"), pergunta, resposta])
     except Exception as e:
-        print(f"Erro ao salvar histórico: {e}")
+        print(f"Erro histórico: {e}")
 
-# --- 4. CARREGAMENTO DE DADOS DO GOOGLE SHEETS ---
+# --- 4. CARREGAMENTO ---
 @st.cache_data(ttl=600)
 def ler_base_sheets():
     escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -91,17 +94,11 @@ def ler_base_sheets():
     anp = planilha.worksheet("Apoio_ANP").get_all_records()
     fipe = planilha.worksheet("Apoio_FIPE").get_all_records()
     antt = planilha.worksheet("Apoio_ANTT").get_all_records()
-    param = planilha.worksheet("Parametros_Custos").get_all_records()
     
-    # Proteção anti-duplicidade para a aba principal
     aba_rotas = planilha.worksheet("Rotas_Ativas").get_all_values()
-    if aba_rotas and len(aba_rotas) > 1:
-        df_rotas = pd.DataFrame(aba_rotas[1:], columns=aba_rotas[0])
-    else:
-        df_rotas = pd.DataFrame()
+    df_rotas = pd.DataFrame(aba_rotas[1:], columns=aba_rotas[0]) if len(aba_rotas) > 1 else pd.DataFrame()
     
-    contexto = f"ANP: {anp}\nFIPE: {fipe}\nANTT: {antt}\nPARAMETROS: {param}"
-    return {"contexto": contexto, "tabela": df_rotas}
+    return {"contexto": f"ANP: {anp}\nFIPE: {fipe}\nANTT: {antt}", "tabela": df_rotas}
 
 # --- 5. INTERFACE DO USUÁRIO ---
 st.title("🚛 Inteligência de Fretes - Natura")
@@ -117,29 +114,35 @@ with st.sidebar:
 
 try:
     dados = ler_base_sheets()
-    contexto_ia = dados["contexto"]
-    df_rotas = dados["tabela"]
+    contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
 except Exception as e:
-    st.error(f"Erro ao conectar: {e}")
+    st.error(f"Erro de conexão.")
     df_rotas = pd.DataFrame()
-    contexto_ia = ""
 
 if not df_rotas.empty:
-    df_rotas.columns = df_rotas.columns.astype(str).str.strip()
+    # Formata colunas para maiúsculo para busca inteligente
+    df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
     
-    # 1. PROCESSAMENTO DE NÚMEROS
-    # Busca a coluna real, ou cria uma de Zeros se não existir
-    base = df_rotas.get("CUSTO_BASE", pd.Series([0]*len(df_rotas))).apply(limpar_numero_br)
-    pedagio = df_rotas.get("PEDAGIO", pd.Series([0]*len(df_rotas))).apply(limpar_numero_br)
+    # BUSCA INTELIGENTE DE COLUNAS
+    col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
+    col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
+    col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
+    col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
     
-    # O volume recebe um tratamento especial: se for 0, vira 1 para não anular a conta
-    volume = df_rotas.get("Vol", pd.Series([1]*len(df_rotas))).apply(limpar_numero_br)
+    # Processamento de Custos
+    base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
+    contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
+    pedagio = df_rotas[col_pedagio].apply(limpar_numero_br) if col_pedagio else pd.Series([0.0]*len(df_rotas))
+    volume = df_rotas[col_vol].apply(limpar_numero_br) if col_vol else pd.Series([1.0]*len(df_rotas))
     volume = volume.apply(lambda x: 1.0 if x == 0 else x)
+    
+    # Se CUSTO BASE estiver zerado, usa o VALOR DE CONTRATO
+    base = base.where(base > 0, contrato)
     
     df_rotas["CUSTO_TOTAL"] = base + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
-    # 2. KPIs
+    # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -155,29 +158,31 @@ if not df_rotas.empty:
 
     st.divider()
 
-    # 3. LAYOUT (GRÁFICOS X IA)
     col_grafico, col_chat = st.columns([1.2, 1])
 
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
         with aba_barras:
-            # Encontra a coluna de origem independente de espaços
-            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in str(c).upper() and 'ZONA' in str(c).upper()), None)
+            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c and ('ZONA' in c or 'DESCRI' in c)), None)
+            if not col_origem: col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
+            
             if col_origem:
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
-                # Filtra os que vieram zerados para não poluir
                 df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
-                df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
-                st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                if not df_chart.empty:
+                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                else:
+                    st.warning("Valores de custo vieram zerados da base.")
             else:
-                st.info("Coluna de Origem não encontrada no arquivo.")
+                st.info("Coluna de Origem não encontrada.")
 
         with aba_mapa:
-            col_lat_o = next((c for c in df_rotas.columns if 'LATITUDE ORIGEM' in str(c).upper()), None)
-            col_lon_o = next((c for c in df_rotas.columns if 'LONGITUDE ORIGEM' in str(c).upper()), None)
-            col_lat_d = next((c for c in df_rotas.columns if 'LATITUDE DESTINO' in str(c).upper()), None)
-            col_lon_d = next((c for c in df_rotas.columns if 'LONGITUDE DESTINO' in str(c).upper()), None)
+            col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
+            col_lon_o = next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
+            col_lat_d = next((c for c in df_rotas.columns if 'LAT' in c and 'DEST' in c), None)
+            col_lon_d = next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
             
             if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
                 df_rotas['lat_origem'] = df_rotas[col_lat_o].apply(limpar_coordenada)
@@ -190,19 +195,17 @@ if not df_rotas.empty:
                 if not df_mapa.empty:
                     st.caption(f"✨ Exibindo {len(df_mapa)} rotas no mapa.")
                     camada_arcos = pdk.Layer(
-                        "ArcLayer",
-                        data=df_mapa,
+                        "ArcLayer", data=df_mapa,
                         get_source_position=["lon_origem", "lat_origem"],
                         get_target_position=["lon_destino", "lat_destino"],
                         get_source_color=[255, 140, 0, 160], 
                         get_target_color=[0, 200, 255, 160], 
-                        get_width=3,
-                        pickable=True,
+                        get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
                     st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style="mapbox://styles/mapbox/dark-v10"))
                 else:
-                    st.warning("⚠️ Os números das coordenadas não puderam ser lidos.")
+                    st.warning("⚠️ Coordenadas inválidas após limpeza.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
@@ -233,7 +236,6 @@ if not df_rotas.empty:
                     st.session_state.msgs.append({"role": "assistant", "content": res})
                     salvar_historico_ia(pergunta, res)
                     
-                    # GERADOR DE CSV
                     if "|" in res and "---" in res:
                         linhas = [l.strip() for l in res.split('\n') if '|' in l and '---' not in l]
                         if len(linhas) > 1:
@@ -241,6 +243,3 @@ if not df_rotas.empty:
                             st.download_button("📥 Baixar Base (CSV)", csv_str.encode('utf-8-sig'), "base_ia.csv", "text/csv")
                 except Exception as e: 
                     st.error(f"Erro: {e}")
-
-else:
-    st.info("Planilha vazia ou carregando...")
