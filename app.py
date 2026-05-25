@@ -21,8 +21,9 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 def limpar_numero_br(valor):
     """Converte valores financeiros para float, lidando com formatações malucas"""
     if pd.isna(valor): return 0.0
-    v_str = str(valor).strip().upper()
-    if v_str in ['', 'NAN', 'NULL', 'NONE']: return 0.0
+    # Remove espaços invisíveis e hífens que o Excel pode exportar
+    v_str = str(valor).strip().upper().replace('\xa0', '').replace('\u202f', '')
+    if v_str in ['', 'NAN', 'NULL', 'NONE', '-']: return 0.0
     
     v_str = v_str.replace('R$', '').replace('$', '').replace(' ', '').replace('"', '')
     if '.' in v_str and ',' in v_str:
@@ -50,7 +51,6 @@ def limpar_coordenada(coord):
         val = float(c_str)
         if val == 0.0: return None
         
-        # Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
         while abs(val) > 180:
             val = val / 10.0
             
@@ -116,18 +116,16 @@ try:
     dados = ler_base_sheets()
     contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
 except Exception as e:
-    st.error(f"Erro de conexão.")
+    st.error("Erro de conexão.")
     df_rotas = pd.DataFrame()
 
 if not df_rotas.empty:
-    # Padroniza colunas para caixa alta e remove quebras de linha invisíveis
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
     
     # BUSCA INTELIGENTE DE COLUNAS FINANCEIRAS E OPERACIONAIS
     col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
     col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
     
-    # BUSCA TURBINADA DO FRETE CONSIDERADO (A coluna mais importante!)
     col_frete = None
     if 'FRETE CONSIDERADO' in df_rotas.columns:
         col_frete = 'FRETE CONSIDERADO'
@@ -153,13 +151,6 @@ if not df_rotas.empty:
     df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
-    # MODO DEPURAÇÃO: Mostra na tela se ele achou a coluna de frete e se os valores estão a zero!
-    if df_rotas["Custo_Total_Ponderado"].sum() == 0:
-        st.error("🚨 ALERTA: Todos os custos calculados deram ZERO! O gráfico vai ficar vazio.")
-        st.write(f"Nome da coluna de Frete encontrada: `{col_frete}`")
-        st.write("Amostra dos 5 primeiros valores encontrados:")
-        st.write(df_rotas[[col_frete]].head() if col_frete else "Nenhuma coluna de frete encontrada.")
-    
     # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4 = st.columns(4)
@@ -181,28 +172,36 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
-        # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
-        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c and 'LOCAL - UF' in c), None)
-        if not col_origem: 
-            col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c), None)
-        
         with aba_barras:
+            # Otimização: Procurar pela coluna de DESCRIÇÃO (que tem "Cabreúva", "Murici") em vez de "Local - UF" (que só tem SP, AL)
+            col_origem = next((c for c in df_rotas.columns if 'DESCRI' in c and 'ORIGEM' in c), None)
+            if not col_origem: 
+                col_origem = next((c for c in df_rotas.columns if 'LOCAL' in c and 'UF' in c), None)
+            
             if col_origem and col_origem in df_rotas.columns:
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
-                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
-                if not df_chart.empty:
-                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
-                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                df_chart_filtrado = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
+                
+                if not df_chart_filtrado.empty:
+                    df_chart_filtrado = df_chart_filtrado.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                    st.bar_chart(df_chart_filtrado.set_index("CD de Origem"), use_container_width=True)
                 else:
-                    st.warning("⚠️ Os valores de custo calculados vieram zerados. Verifique as colunas de valores da planilha.")
+                    st.warning("⚠️ Todos os custos calculados ficaram a zero.")
+                
+                # === O RAIO-X DE DIAGNÓSTICO ===
+                with st.expander("🔍 Raio-X dos Custos (Clique aqui se o gráfico estiver estranho)"):
+                    st.write("Veja exatamente os números que o Python conseguiu ler de cada coluna:")
+                    colunas_debug = [c for c in [col_origem, col_base, col_contrato, col_frete, 'CUSTO_TOTAL', 'Custo_Total_Ponderado'] if c]
+                    df_debug = df_rotas[colunas_debug].copy()
+                    st.dataframe(df_debug, use_container_width=True)
             else:
-                st.info("Coluna de Origem não encontrada. Colunas disponíveis: " + ", ".join(df_rotas.columns))
+                st.info("Nenhuma coluna de origem válida encontrada.")
 
         with aba_mapa:
-            col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
-            col_lon_o = next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
-            col_lat_d = next((c for c in df_rotas.columns if 'LAT' in c and 'DEST' in c), None)
-            col_lon_d = next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
+            col_lat_o = "LATITUDE ORIGEM" if "LATITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
+            col_lon_o = "LONGITUDE ORIGEM" if "LONGITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
+            col_lat_d = "LATITUDE DESTINO" if "LATITUDE DESTINO" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'DEST' in c), None)
+            col_lon_d = "LONGITUDE DESTINO" if "LONGITUDE DESTINO" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
             
             if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
                 df_rotas['lat_origem'] = df_rotas[col_lat_o].apply(limpar_coordenada)
@@ -213,23 +212,21 @@ if not df_rotas.empty:
                 df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
                 
                 if not df_mapa.empty:
-                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa de arcos.")
+                    st.caption(f"✨ A exibir {len(df_mapa)} rotas conectadas no mapa de arcos.")
                     camada_arcos = pdk.Layer(
                         "ArcLayer", data=df_mapa,
                         get_source_position=["lon_origem", "lat_origem"],
                         get_target_position=["lon_destino", "lat_destino"],
-                        get_source_color=[255, 140, 0, 160], # Laranja Natura
-                        get_target_color=[0, 200, 255, 160], # Azul Destino
+                        get_source_color=[255, 140, 0, 160], 
+                        get_target_color=[0, 200, 255, 160], 
                         get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
-                    
-                    # CORREÇÃO 2: map_style=None força o Streamlit a usar o mapa base gratuito!
                     st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style=None))
                 else:
-                    st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
+                    st.warning("⚠️ As coordenadas limpas não geraram pontos válidos.")
             else:
-                st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
+                st.error("⚠️ As colunas de Latitude e Longitude não foram encontradas!")
 
     with col_chat:
         st.subheader("🤖 Agente Especialista & Base de Dados")
@@ -252,7 +249,7 @@ if not df_rotas.empty:
             
             with st.chat_message("assistant"):
                 try:
-                    with st.spinner("Pensando..."):
+                    with st.spinner("A pensar..."):
                         res = st.session_state.chat.send_message(pergunta).text
                     st.markdown(res)
                     st.session_state.msgs.append({"role": "assistant", "content": res})
