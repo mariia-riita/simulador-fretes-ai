@@ -158,38 +158,44 @@ if not df_rotas.empty:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
         with aba_barras:
-            st.markdown("### 📊 Análise de Custos por Localidade")
+            st.markdown("### 📊 Custo por CD de Origem")
             
-            # FILTRA AS COLUNAS QUE FAZEM SENTIDO PARA O GRÁFICO
-            colunas_texto = [c for c in df_rotas.columns if df_rotas[c].dtype == 'object' and len(df_rotas[c].unique()) > 1]
-            colunas_sugeridas = [c for c in colunas_texto if 'ORIGEM' in c or 'LOCAL' in c or 'DESCRI' in c or 'DESTINO' in c]
-            if not colunas_sugeridas: colunas_sugeridas = df_rotas.columns.tolist()
+            # FORÇA ABSOLUTA: Dizemos ao Python para procurar APENAS a coluna oficial de Origem
+            col_origem = 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM'
             
-            # O PODER NA MÃO DO UTILIZADOR: Caixa de seleção para o eixo do gráfico
-            col_selecionada = st.selectbox(
-                "Selecione a coluna para agrupar os custos:", 
-                colunas_sugeridas, 
-                index=0,
-                help="Escolha a coluna que contém os nomes dos CDs ou Cidades."
-            )
-            
-            if col_selecionada:
-                # Limpa os nomes para não criar barras duplicadas (ex: 'CABREUVA ' e 'CABREUVA')
-                df_rotas[col_selecionada] = df_rotas[col_selecionada].astype(str).str.strip().str.upper()
+            if col_origem in df_rotas.columns:
+                # Limpa os espaços nos nomes (para evitar duplicações como 'CABREUVA' e 'CABREUVA ')
+                df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 
-                # Agrupa e soma os custos
-                df_chart = df_rotas.groupby(col_selecionada)["Custo_Total_Ponderado"].sum().reset_index()
-                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0] # Esconde quem tem custo zero
+                # Agrupa e faz a matemática
+                df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
+                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
                 
                 if not df_chart.empty:
-                    # Ordena do mais caro para o mais barato (Escadinha)
+                    # Ordena do maior custo para o menor
                     df_chart = df_chart.sort_values(by="Custo_Total_Ponderado", ascending=False)
-                    df_chart = df_chart.rename(columns={col_selecionada: "Local", "Custo_Total_Ponderado": "Custo R$"})
+                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo Total (R$)"})
                     
-                    # Desenha o Gráfico de Barras oficial
-                    st.bar_chart(df_chart.set_index("Local"), use_container_width=True)
+                    # O VISUAL DEFINITIVO: Tabela elegante com barra de progresso embutida!
+                    st.dataframe(
+                        df_chart,
+                        column_config={
+                            "CD de Origem": st.column_config.TextColumn("CD de Origem (Filial)"),
+                            "Custo Total (R$)": st.column_config.ProgressColumn(
+                                "Despesa Total (R$)",
+                                help="Custo ponderado total por origem",
+                                format="R$ %.2f",
+                                min_value=0,
+                                max_value=float(df_chart["Custo Total (R$)"].max()),
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
                 else:
-                    st.warning("⚠️ Os custos para esta coluna vieram zerados. Escolha outra coluna no menu acima.")
+                    st.warning("⚠️ Todos os valores de custo ficaram a zeros.")
+            else:
+                st.error("🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' desapareceu da planilha base!")
         with aba_mapa:
             col_lat_o = "LATITUDE ORIGEM" if "LATITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
             col_lon_o = "LONGITUDE ORIGEM" if "LONGITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
