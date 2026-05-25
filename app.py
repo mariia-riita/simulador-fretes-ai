@@ -166,8 +166,7 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
-        # CAPTURA AS COLUNAS CORRETAS APÓS A SUA ATUALIZAÇÃO NO SHEETS
-        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c or 'LOCAL-UF' in c), None)
+        col_origem = next((c for c in df_rotas.columns if 'Local - UF' in c or 'Local-UF' in c), None)
         if not col_origem: col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
         
         with aba_barras:
@@ -207,7 +206,7 @@ if not df_rotas.empty:
                         get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
-                    st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style="mapbox://styles/mapbox/dark-v10"))
+                    st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style="road"))
                 else:
                     st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
