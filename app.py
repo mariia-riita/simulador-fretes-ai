@@ -158,21 +158,38 @@ if not df_rotas.empty:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
         with aba_barras:
-            # CORREÇÃO DEFINITIVA DO GRÁFICO: Puxa o nome da Cidade/CD de origem!
-            col_origem = next((c for c in df_rotas.columns if 'DESCRI' in c and 'ORIGEM' in c), None)
+            st.markdown("### 📊 Análise de Custos por Localidade")
             
-            if col_origem and col_origem in df_rotas.columns:
-                df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
-                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
+            # FILTRA AS COLUNAS QUE FAZEM SENTIDO PARA O GRÁFICO
+            colunas_texto = [c for c in df_rotas.columns if df_rotas[c].dtype == 'object' and len(df_rotas[c].unique()) > 1]
+            colunas_sugeridas = [c for c in colunas_texto if 'ORIGEM' in c or 'LOCAL' in c or 'DESCRI' in c or 'DESTINO' in c]
+            if not colunas_sugeridas: colunas_sugeridas = df_rotas.columns.tolist()
+            
+            # O PODER NA MÃO DO UTILIZADOR: Caixa de seleção para o eixo do gráfico
+            col_selecionada = st.selectbox(
+                "Selecione a coluna para agrupar os custos:", 
+                colunas_sugeridas, 
+                index=0,
+                help="Escolha a coluna que contém os nomes dos CDs ou Cidades."
+            )
+            
+            if col_selecionada:
+                # Limpa os nomes para não criar barras duplicadas (ex: 'CABREUVA ' e 'CABREUVA')
+                df_rotas[col_selecionada] = df_rotas[col_selecionada].astype(str).str.strip().str.upper()
+                
+                # Agrupa e soma os custos
+                df_chart = df_rotas.groupby(col_selecionada)["Custo_Total_Ponderado"].sum().reset_index()
+                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0] # Esconde quem tem custo zero
+                
                 if not df_chart.empty:
-                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
-                    # O gráfico de barras vai mostrar todas as cidades agora!
-                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                    # Ordena do mais caro para o mais barato (Escadinha)
+                    df_chart = df_chart.sort_values(by="Custo_Total_Ponderado", ascending=False)
+                    df_chart = df_chart.rename(columns={col_selecionada: "Local", "Custo_Total_Ponderado": "Custo R$"})
+                    
+                    # Desenha o Gráfico de Barras oficial
+                    st.bar_chart(df_chart.set_index("Local"), use_container_width=True)
                 else:
-                    st.warning("⚠️ Os valores de custo calculados vieram zerados.")
-            else:
-                st.info("Coluna com a Descrição das Zonas de Origem não encontrada.")
-
+                    st.warning("⚠️ Os custos para esta coluna vieram zerados. Escolha outra coluna no menu acima.")
         with aba_mapa:
             col_lat_o = "LATITUDE ORIGEM" if "LATITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
             col_lon_o = "LONGITUDE ORIGEM" if "LONGITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
