@@ -184,7 +184,7 @@ if not df_rotas.empty:
         # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
         col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c and 'LOCAL - UF' in c), None)
         if not col_origem: 
-            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
+            col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c), None)
         
         with aba_barras:
             if col_origem and col_origem in df_rotas.columns:
