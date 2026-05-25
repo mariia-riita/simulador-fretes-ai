@@ -191,36 +191,68 @@ if not df_rotas.empty:
                     st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
                     st.info(f"Colunas que o robô está vendo agora: {', '.join(df_rotas.columns)}")
 
-    with col_chat:
-        st.subheader("🤖 Agente Especialista")
-        instrucao = f"""Você é um Engenheiro de Logística Sênior da Natura. 
-        Calcule o 'Should Cost' e compare com o 'Piso ANTT'.
-        REGRAS: 1. Custo Real: Diesel (ANP) + 5% Lubrificante + Fixos (IPVA 1% FIPE/12, Seguro 2.5%/12) + 10% Margem.
-        2. ANTT: (Distância * CCD) + CC da aba Apoio_ANTT.
-        DADOS DE CONSULTA: {contexto_ia}"""
-        
-        if "chat" not in st.session_state:
-            st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
-            st.session_state.msgs = []
+            with col_chat:
+                st.subheader("🤖 Agente Especialista & Gerador de Dados")
+                
+                # --- INSTRUÇÃO ATUALIZADA: ENSINANDO A IA A CRIAR BASES DE DADOS ---
+                instrucao = f"""Você é um Engenheiro de Logística Sênior da Natura e um Gerador de Dados.
+                REGRAS DE CÁLCULO: 1. Custo Real: Diesel (ANP) + 5% Lubrificante + Fixos (IPVA 1% FIPE/12, Seguro 2.5%/12) + 10% Margem.
+                2. ANTT: (Distância * CCD) + CC da aba Apoio_ANTT.
+                
+                REGRA DE OURO (CRIAR BASE DE DADOS): 
+                Se o usuário pedir para 'criar uma base de dados', 'gerar tabela' ou 'simular várias rotas', você DEVE obrigatoriamente formatar sua resposta final como uma Tabela em Markdown puro (separada por barras verticais |). 
+                Inclua colunas claras como: Origem, Destino, Distância (km), Veículo, Eixos, Custo Combustível, Frete Mínimo ANTT e Should Cost.
+                
+                DADOS DE CONSULTA: {contexto_ia}"""
+                
+                if "chat" not in st.session_state:
+                    st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
+                    st.session_state.msgs = []
 
-        for m in st.session_state.msgs:
-            with st.chat_message(m["role"]): st.markdown(m["content"])
+                # Mostra o histórico do chat
+                for m in st.session_state.msgs:
+                    with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Pergunte ao Agente...")
-        if pergunta:
-            st.chat_message("user").markdown(pergunta)
-            st.session_state.msgs.append({"role": "user", "content": pergunta})
-            
-            with st.chat_message("assistant"):
-                try:
-                    with st.spinner("Calculando..."):
-                        res = st.session_state.chat.send_message(pergunta).text
-                    st.markdown(res)
-                    st.session_state.msgs.append({"role": "assistant", "content": res})
+                pergunta = st.chat_input("Ex: Crie uma base de dados simulando 3 rotas para o Nordeste...")
+                if pergunta:
+                    st.chat_message("user").markdown(pergunta)
+                    st.session_state.msgs.append({"role": "user", "content": pergunta})
                     
-                    # Salva a conversa na planilha!
-                    salvar_historico_ia(pergunta, res)
-                except Exception as e: 
-                    st.error(f"Erro na IA: {e}")
+                    with st.chat_message("assistant"):
+                        try:
+                            with st.spinner("Processando e gerando dados..."):
+                                res = st.session_state.chat.send_message(pergunta).text
+                            
+                            st.markdown(res)
+                            st.session_state.msgs.append({"role": "assistant", "content": res})
+                            
+                            # Salva no histórico do Sheets
+                            salvar_historico_ia(pergunta, res)
+                            
+                            # --- O ESPIONADOR DE TABELAS (CONVERSOR PARA CSV) ---
+                            # Se o Python achar uma tabela Markdown na resposta da IA, ele cria um CSV para download
+                            if "|" in res and "---" in res:
+                                linhas = res.split('\n')
+                                linhas_tabela = [l.strip() for l in linhas if '|' in l]
+                                
+                                if len(linhas_tabela) > 2:
+                                    csv_str = ""
+                                    for linha in linhas_tabela:
+                                        if '---' in linha: continue # Pula a linha separadora do Markdown
+                                        # Limpa as barras e monta o formato CSV com ponto e vírgula
+                                        linha_limpa = linha.strip().strip('|')
+                                        colunas = [col.strip() for col in linha_limpa.split('|')]
+                                        csv_str += ";".join(colunas) + "\n"
+                                    
+                                    st.success("✨ Base de dados detectada! Você pode baixá-la abaixo:")
+                                    st.download_button(
+                                        label="📥 Baixar Base de Dados (CSV)",
+                                        data=csv_str.encode('utf-8-sig'),
+                                        file_name="base_simulacao_ia.csv",
+                                        mime="text/csv"
+                                    )
+                                    
+                        except Exception as e: 
+                            st.error(f"Erro na IA: {e}")
 else:
     st.info("Aba Rotas_Ativas vazia ou inacessível.")
