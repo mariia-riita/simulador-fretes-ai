@@ -126,11 +126,18 @@ if not df_rotas.empty:
     # BUSCA INTELIGENTE DE COLUNAS FINANCEIRAS E OPERACIONAIS
     col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
     col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
-    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONSIDERADO' in c), None)
+    
+    # BUSCA TURBINADA DO FRETE CONSIDERADO (A coluna mais importante!)
+    col_frete = None
+    if 'FRETE CONSIDERADO' in df_rotas.columns:
+        col_frete = 'FRETE CONSIDERADO'
+    else:
+        col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONS' in c), None)
+        
     col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
     col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
     
-    # Processamento dos valores com a inteligência de cascata (fallback)
+    # Processamento dos valores
     base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
     contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
     frete_considerado = df_rotas[col_frete].apply(limpar_numero_br) if col_frete else pd.Series([0.0]*len(df_rotas))
@@ -138,12 +145,20 @@ if not df_rotas.empty:
     volume = df_rotas[col_vol].apply(limpar_numero_br) if col_vol else pd.Series([1.0]*len(df_rotas))
     volume = volume.apply(lambda x: 1.0 if x == 0 else x)
     
-    # Roda a regra em cascata para garantir que o custo real da linha seja capturado
-    base = base.where(base > 0, contrato)
-    base = base.where(base > 0, frete_considerado)
+    # A REGRA DE CASCATA: Se a Base estiver a zero, usa o Contrato. Se o Contrato estiver a zero, USA O FRETE CONSIDERADO!
+    custo_principal = base.copy()
+    custo_principal = custo_principal.where(custo_principal > 0, contrato)
+    custo_principal = custo_principal.where(custo_principal > 0, frete_considerado)
     
-    df_rotas["CUSTO_TOTAL"] = base + pedagio
+    df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
+    
+    # MODO DEPURAÇÃO: Mostra na tela se ele achou a coluna de frete e se os valores estão a zero!
+    if df_rotas["Custo_Total_Ponderado"].sum() == 0:
+        st.error("🚨 ALERTA: Todos os custos calculados deram ZERO! O gráfico vai ficar vazio.")
+        st.write(f"Nome da coluna de Frete encontrada: `{col_frete}`")
+        st.write("Amostra dos 5 primeiros valores encontrados:")
+        st.write(df_rotas[[col_frete]].head() if col_frete else "Nenhuma coluna de frete encontrada.")
     
     # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
