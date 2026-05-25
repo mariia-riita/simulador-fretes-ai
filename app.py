@@ -172,16 +172,44 @@ if not df_rotas.empty:
             col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
         
         with aba_barras:
-            if col_origem and col_origem in df_rotas.columns:
+            st.markdown("### 📊 Custo por CD de Origem")
+            
+            # FORÇA ABSOLUTA: Dizemos ao Python para procurar APENAS a coluna oficial de Origem
+            col_origem = 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM'
+            
+            if col_origem in df_rotas.columns:
+                # Limpa os espaços nos nomes (para evitar duplicações como 'CABREUVA' e 'CABREUVA ')
+                df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
+                
+                # Agrupa e faz a matemática
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
+                
                 if not df_chart.empty:
-                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
-                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
+                    # Ordena do maior custo para o menor
+                    df_chart = df_chart.sort_values(by="Custo_Total_Ponderado", ascending=False)
+                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo Total (R$)"})
+                    
+                    # O VISUAL DEFINITIVO: Tabela elegante com barra de progresso embutida!
+                    st.dataframe(
+                        df_chart,
+                        column_config={
+                            "CD de Origem": st.column_config.TextColumn("CD de Origem (Filial)"),
+                            "Custo Total (R$)": st.column_config.ProgressColumn(
+                                "Despesa Total (R$)",
+                                help="Custo ponderado total por origem",
+                                format="R$ %.2f",
+                                min_value=0,
+                                max_value=float(df_chart["Custo Total (R$)"].max()),
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
                 else:
-                    st.warning("⚠️ Os valores de custo calculados vieram zerados. Verifique as colunas de valores da planilha.")
+                    st.warning("⚠️ Todos os valores de custo ficaram a zeros.")
             else:
-                st.info("Coluna de Origem não encontrada. Colunas disponíveis: " + ", ".join(df_rotas.columns))
+                st.error("🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' desapareceu da planilha base!")
 
         with aba_mapa:
             col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
