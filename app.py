@@ -17,8 +17,9 @@ LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11v
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
-# --- 3. MÁQUINAS DE LIMPEZA DE DADOS ---
+# --- 3. MÁQUINAS DE LIMPEZA DE DADOS (À PROVA DE BALAS) ---
 def limpar_numero_br(valor):
+    """Converte valores financeiros para float, lidando com formatações malucas"""
     if pd.isna(valor): return 0.0
     v_str = str(valor).strip().upper()
     if v_str in ['', 'NAN', 'NULL', 'NONE']: return 0.0
@@ -35,6 +36,7 @@ def limpar_numero_br(valor):
         return 0.0
 
 def limpar_coordenada(coord):
+    """Recupera coordenadas mesmo se o Excel tiver engolido a vírgula"""
     if pd.isna(coord): return None
     c_str = str(coord).strip().replace('"', '').replace(' ', '')
     if not c_str or c_str.upper() in ['NAN', 'NULL', 'NONE']: return None
@@ -47,8 +49,11 @@ def limpar_coordenada(coord):
     try:
         val = float(c_str)
         if val == 0.0: return None
+        
+        # Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
         while abs(val) > 180:
             val = val / 10.0
+            
         return val
     except:
         return None
@@ -75,7 +80,7 @@ def salvar_historico_ia(pergunta, resposta):
             
         aba_hist.append_row([datetime.now().strftime("%d/%m/%Y %H:%M:%S"), pergunta, resposta])
     except Exception as e:
-        pass
+        print(f"Erro histórico: {e}")
 
 # --- 4. CARREGAMENTO ---
 @st.cache_data(ttl=600)
@@ -111,18 +116,21 @@ try:
     dados = ler_base_sheets()
     contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
 except Exception as e:
-    st.error("Erro de conexão.")
+    st.error(f"Erro de conexão.")
     df_rotas = pd.DataFrame()
 
 if not df_rotas.empty:
+    # Padroniza colunas para caixa alta e remove quebras de linha invisíveis
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
     
+    # BUSCA INTELIGENTE DE COLUNAS FINANCEIRAS E OPERACIONAIS
     col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
     col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
-    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONS' in c), None)
+    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONSIDERADO' in c), None)
     col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
     col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
     
+    # Processamento dos valores com a inteligência de cascata (fallback)
     base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
     contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
     frete_considerado = df_rotas[col_frete].apply(limpar_numero_br) if col_frete else pd.Series([0.0]*len(df_rotas))
@@ -130,13 +138,14 @@ if not df_rotas.empty:
     volume = df_rotas[col_vol].apply(limpar_numero_br) if col_vol else pd.Series([1.0]*len(df_rotas))
     volume = volume.apply(lambda x: 1.0 if x == 0 else x)
     
-    custo_principal = base.copy()
-    custo_principal = custo_principal.where(custo_principal > 0, contrato)
-    custo_principal = custo_principal.where(custo_principal > 0, frete_considerado)
+    # Roda a regra em cascata para garantir que o custo real da linha seja capturado
+    base = base.where(base > 0, contrato)
+    base = base.where(base > 0, frete_considerado)
     
-    df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
+    df_rotas["CUSTO_TOTAL"] = base + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
+    # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -157,50 +166,28 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
+        # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
+        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c and 'LOCAL - UF' in c), None)
+        if not col_origem: 
+            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
+        
         with aba_barras:
-            st.markdown("### 📊 Custo por CD de Origem")
-            
-            # FORÇA ABSOLUTA: Dizemos ao Python para procurar APENAS a coluna oficial de Origem
-            col_origem = 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM'
-            
-            if col_origem in df_rotas.columns:
-                # Limpa os espaços nos nomes (para evitar duplicações como 'CABREUVA' e 'CABREUVA ')
-                df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
-                
-                # Agrupa e faz a matemática
+            if col_origem and col_origem in df_rotas.columns:
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
-                
                 if not df_chart.empty:
-                    # Ordena do maior custo para o menor
-                    df_chart = df_chart.sort_values(by="Custo_Total_Ponderado", ascending=False)
-                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo Total (R$)"})
-                    
-                    # O VISUAL DEFINITIVO: Tabela elegante com barra de progresso embutida!
-                    st.dataframe(
-                        df_chart,
-                        column_config={
-                            "CD de Origem": st.column_config.TextColumn("CD de Origem (Filial)"),
-                            "Custo Total (R$)": st.column_config.ProgressColumn(
-                                "Despesa Total (R$)",
-                                help="Custo ponderado total por origem",
-                                format="R$ %.2f",
-                                min_value=0,
-                                max_value=float(df_chart["Custo Total (R$)"].max()),
-                            ),
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
+                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True)
                 else:
-                    st.warning("⚠️ Todos os valores de custo ficaram a zeros.")
+                    st.warning("⚠️ Os valores de custo calculados vieram zerados. Verifique as colunas de valores da planilha.")
             else:
-                st.error("🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' desapareceu da planilha base!")
+                st.info("Coluna de Origem não encontrada. Colunas disponíveis: " + ", ".join(df_rotas.columns))
+
         with aba_mapa:
-            col_lat_o = "LATITUDE ORIGEM" if "LATITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
-            col_lon_o = "LONGITUDE ORIGEM" if "LONGITUDE ORIGEM" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
-            col_lat_d = "LATITUDE DESTINO" if "LATITUDE DESTINO" in df_rotas.columns else next((c for c in df_rotas.columns if 'LAT' in c and 'DEST' in c), None)
-            col_lon_d = "LONGITUDE DESTINO" if "LONGITUDE DESTINO" in df_rotas.columns else next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
+            col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
+            col_lon_o = next((c for c in df_rotas.columns if 'LON' in c and 'ORIG' in c), None)
+            col_lat_d = next((c for c in df_rotas.columns if 'LAT' in c and 'DEST' in c), None)
+            col_lon_d = next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
             
             if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
                 df_rotas['lat_origem'] = df_rotas[col_lat_o].apply(limpar_coordenada)
@@ -211,19 +198,21 @@ if not df_rotas.empty:
                 df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
                 
                 if not df_mapa.empty:
-                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa.")
+                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa de arcos.")
                     camada_arcos = pdk.Layer(
                         "ArcLayer", data=df_mapa,
                         get_source_position=["lon_origem", "lat_origem"],
                         get_target_position=["lon_destino", "lat_destino"],
-                        get_source_color=[255, 140, 0, 160], 
-                        get_target_color=[0, 200, 255, 160], 
+                        get_source_color=[255, 140, 0, 160], # Laranja Natura
+                        get_target_color=[0, 200, 255, 160], # Azul Destino
                         get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
+                    
+                    # CORREÇÃO 2: map_style=None força o Streamlit a usar o mapa base gratuito!
                     st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style=None))
                 else:
-                    st.warning("⚠️ Coordenadas inválidas após limpeza.")
+                    st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
@@ -241,7 +230,7 @@ if not df_rotas.empty:
         for m in st.session_state.msgs:
             with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Ex: Gere uma base simulando rotas...")
+        pergunta = st.chat_input("Ex: Gere uma base simulando rotas para o Norte...")
         if pergunta:
             st.chat_message("user").markdown(pergunta)
             st.session_state.msgs.append({"role": "user", "content": pergunta})
