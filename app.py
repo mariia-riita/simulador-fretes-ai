@@ -14,15 +14,16 @@ st.set_page_config(page_title="Should Cost IA - Natura", page_icon="🚛", layou
 # --- 2. CONSTANTES E SEGURANÇA ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
+LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
-# --- 3. MÁQUINAS DE LIMPEZA DE DADOS (À PROVA DE BALAS) ---
+# --- 3. MÁQUINAS DE LIMPEZA E SALVAMENTO DE DADOS ---
 def limpar_numero_br(valor):
     """Converte valores financeiros para float, lidando com formatações malucas"""
     if pd.isna(valor): return 0.0
-    v_str = str(valor).strip().upper()
-    if v_str in ['', 'NAN', 'NULL', 'NONE']: return 0.0
+    v_str = str(valor).strip().upper().replace('\xa0', '').replace('\u202f', '')
+    if v_str in ['', 'NAN', 'NULL', 'NONE', '-']: return 0.0
     
     v_str = v_str.replace('R$', '').replace('$', '').replace(' ', '').replace('"', '')
     if '.' in v_str and ',' in v_str:
@@ -49,11 +50,8 @@ def limpar_coordenada(coord):
     try:
         val = float(c_str)
         if val == 0.0: return None
-        
-        # Se o número for gigante (ex: -2330817), devolve a vírgula pro lugar certo!
         while abs(val) > 180:
             val = val / 10.0
-            
         return val
     except:
         return None
@@ -66,6 +64,7 @@ def formatar_kpi_brl(valor):
     else: return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def salvar_historico_ia(pergunta, resposta):
+    """Salva o log de conversas na planilha principal"""
     try:
         escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
@@ -80,7 +79,46 @@ def salvar_historico_ia(pergunta, resposta):
             
         aba_hist.append_row([datetime.now().strftime("%d/%m/%Y %H:%M:%S"), pergunta, resposta])
     except Exception as e:
-        print(f"Erro histórico: {e}")
+        pass
+
+def salvar_simulacao_sheets(linhas_validas):
+    """Injeta as tabelas geradas pela IA diretamente na nova planilha de simulações do usuário"""
+    try:
+        escopos = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        credenciais = ServiceAccountCredentials.from_json_keyfile_dict(cred_dict, escopos)
+        cliente = gspread.authorize(credenciais)
+        
+        planilha_sim = cliente.open_by_url(LINK_PLANILHA_SIMULACOES)
+        try:
+            aba = planilha_sim.get_worksheet(0)
+        except:
+            aba = planilha_sim.sheet1
+            
+        valores_existentes = aba.get_all_values()
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        
+        ia_header = linhas_validas[0]
+        ia_dados = linhas_validas[1:]
+        
+        # Se a planilha estiver virgem (vazia), cria a linha de cabeçalho com carimbo de tempo
+        if len(valores_existentes) == 0:
+            cabecalho_oficial = ["Data/Hora"] + ia_header
+            aba.append_row(cabecalho_oficial)
+            
+        # Prepara as linhas de dados acoplando o carimbo de Data/Hora na frente
+        linhas_para_salvar = []
+        for linha in ia_dados:
+            if linha == ia_header: continue # Evita duplicações acidentais de header
+            linhas_para_salvar.append([data_atual] + linha)
+            
+        if lines_para_salvar := linhas_para_salvar:
+            aba.append_rows(linhas_para_salvar)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Erro ao salvar na planilha de simulações: {e}")
+        return False
 
 # --- 4. CARREGAMENTO ---
 @st.cache_data(ttl=600)
@@ -116,21 +154,18 @@ try:
     dados = ler_base_sheets()
     contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
 except Exception as e:
-    st.error(f"Erro de conexão.")
+    st.error("Erro de conexão.")
     df_rotas = pd.DataFrame()
 
 if not df_rotas.empty:
-    # Padroniza colunas para caixa alta e remove quebras de linha invisíveis
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
     
-    # BUSCA INTELIGENTE DE COLUNAS FINANCEIRAS E OPERACIONAIS
     col_base = next((c for c in df_rotas.columns if 'CUSTO' in c and 'BASE' in c), None)
     col_contrato = next((c for c in df_rotas.columns if 'CONTRATO' in c), None)
-    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONSIDERADO' in c), None)
+    col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONS' in c), None)
     col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
     col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
     
-    # Processamento dos valores com a inteligência de cascata (fallback)
     base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
     contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
     frete_considerado = df_rotas[col_frete].apply(limpar_numero_br) if col_frete else pd.Series([0.0]*len(df_rotas))
@@ -138,14 +173,13 @@ if not df_rotas.empty:
     volume = df_rotas[col_vol].apply(limpar_numero_br) if col_vol else pd.Series([1.0]*len(df_rotas))
     volume = volume.apply(lambda x: 1.0 if x == 0 else x)
     
-    # Roda a regra em cascata para garantir que o custo real da linha seja capturado
-    base = base.where(base > 0, contrato)
-    base = base.where(base > 0, frete_considerado)
+    custo_principal = base.copy()
+    custo_principal = custo_principal.where(custo_principal > 0, contrato)
+    custo_principal = custo_principal.where(custo_principal > 0, frete_considerado)
     
-    df_rotas["CUSTO_TOTAL"] = base + pedagio
+    df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
-    # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -166,50 +200,23 @@ if not df_rotas.empty:
     with col_grafico:
         aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
-        # CORREÇÃO 1: Procura as palavras em MAIÚSCULO, já que convertemos o cabeçalho inteiro para maiúsculo!
-        col_origem = next((c for c in df_rotas.columns if 'LOCAL - UF' in c and 'LOCAL - UF' in c), None)
-        if not col_origem: 
-            col_origem = next((c for c in df_rotas.columns if 'ORIGEM' in c), None)
-        
         with aba_barras:
             st.markdown("### 📊 Custo por CD de Origem")
-            
-            # FORÇA ABSOLUTA: Dizemos ao Python para procurar APENAS a coluna oficial de Origem
             col_origem = 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM'
             
             if col_origem in df_rotas.columns:
-                # Limpa os espaços nos nomes (para evitar duplicações como 'CABREUVA' e 'CABREUVA ')
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
-                
-                # Agrupa e faz a matemática
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
-                df_chart = df_chart[df_chart["Custo_Total_Ponderado"] > 0]
+                df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
-                    # Ordena do maior custo para o menor
                     df_chart = df_chart.sort_values(by="Custo_Total_Ponderado", ascending=False)
-                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo Total (R$)"})
-                    
-                    # O VISUAL DEFINITIVO: Tabela elegante com barra de progresso embutida!
-                    st.dataframe(
-                        df_chart,
-                        column_config={
-                            "CD de Origem": st.column_config.TextColumn("CD de Origem (Filial)"),
-                            "Custo Total (R$)": st.column_config.ProgressColumn(
-                                "Despesa Total (R$)",
-                                help="Custo ponderado total por origem",
-                                format="R$ %.2f",
-                                min_value=0,
-                                max_value=float(df_chart["Custo Total (R$)"].max()),
-                            ),
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
+                    df_chart = df_chart.rename(columns={col_origem: "CD de Origem", "Custo_Total_Ponderado": "Custo R$"})
+                    st.bar_chart(df_chart.set_index("CD de Origem"), use_container_width=True, color="#FF6600")
                 else:
-                    st.warning("⚠️ Todos os valores de custo ficaram a zeros.")
+                    st.warning("⚠️ Os valores de custo calculados vieram zerados ou são todos anomalias.")
             else:
-                st.error("🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' desapareceu da planilha base!")
+                st.error("🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' não foi encontrada!")
 
         with aba_mapa:
             col_lat_o = next((c for c in df_rotas.columns if 'LAT' in c and 'ORIG' in c), None)
@@ -226,30 +233,49 @@ if not df_rotas.empty:
                 df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
                 
                 if not df_mapa.empty:
-                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa de arcos.")
+                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa.")
+                    camada_origens = pdk.Layer(
+                        "ScatterplotLayer", data=df_mapa, get_position=["lon_origem", "lat_origem"],
+                        get_color=[255, 140, 0, 200], get_radius=15000, pickable=True
+                    )
+                    camada_destinos = pdk.Layer(
+                        "ScatterplotLayer", data=df_mapa, get_position=["lon_destino", "lat_destino"],
+                        get_color=[0, 200, 255, 200], get_radius=15000, pickable=True
+                    )
                     camada_arcos = pdk.Layer(
-                        "ArcLayer", data=df_mapa,
-                        get_source_position=["lon_origem", "lat_origem"],
-                        get_target_position=["lon_destino", "lat_destino"],
-                        get_source_color=[255, 140, 0, 160], # Laranja Natura
-                        get_target_color=[0, 200, 255, 160], # Azul Destino
-                        get_width=3, pickable=True,
+                        "ArcLayer", data=df_mapa, get_source_position=["lon_origem", "lat_origem"],
+                        get_target_position=["lon_destino", "lat_destino"], get_source_color=[255, 140, 0, 160], 
+                        get_target_color=[0, 200, 255, 160], get_width=3, pickable=True,
                     )
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
-                    
-                    # CORREÇÃO 2: map_style=None força o Streamlit a usar o mapa base gratuito!
-                    st.pydeck_chart(pdk.Deck(layers=[camada_arcos], initial_view_state=visao, map_style=None))
+                    st.pydeck_chart(pdk.Deck(layers=[camada_origens, camada_destinos, camada_arcos], initial_view_state=visao, map_style=None))
                 else:
                     st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
     with col_chat:
-        st.subheader("🤖 Agente Especialista & Base de Dados")
-        instrucao = f"""Você é um Engenheiro Sênior. 
-        Custo Real: Diesel(ANP)+5% Lubrificante+Fixos+10% Margem. ANTT: (Distância*CCD)+CC.
-        REGRA: Se o usuário pedir para gerar dados/tabela, responda em formato Markdown puro (tabela com |).
-        DADOS: {contexto_ia}"""
+        st.subheader("🤖 Agente Estratégico de Fretes")
+        
+        instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
+        Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
+
+        === PARÂMETROS DE FROTA (Use para simular Should Cost de veículos menores) ===
+        * Carreta (6 Eixos): Capacidade 26-32 Ton | Consumo: 2.2 km/L
+        * Carreta (5 Eixos): Capacidade 20-25 Ton | Consumo: 2.5 km/L
+        * Truck (3 Eixos): Capacidade 14 Ton | Consumo: 3.5 km/L | FIPE ref: R$ 350.000
+        * Toco (2 Eixos): Capacidade 7-8 Ton | Consumo: 4.5 km/L | FIPE ref: R$ 250.000
+        * VUC Urbano (2 Eixos): Capacidade 3-4 Ton | Consumo: 6.5 km/L | FIPE ref: R$ 150.000
+
+        === DIRETRIZES DE ANÁLISE ===
+        1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare-o com o Piso ANTT e com o custo que a Natura está a pagar.
+        2. Veículos Menores: Se o usuário perguntar sobre rotas específicas e o volume for compatível, sugira agressivamente o uso de Truck, Toco ou VUC para reduzir os custos (mostre a simulação matemática do saving).
+        3. Diagnóstico de Anomalias: Se a Natura estiver pagando muito acima da ANTT/Should Cost, classifique como "Oportunidade de Negociação". Se for justificável, explique como "Questão de Mercado" (risco de roubo, frete de retorno vazio, sazonalidade).
+        4. Contratação: Indique o modelo ideal para cada região (Ex: Frota Dedicada para rotas curtas de alto volume vs Spot/Lotação).
+        
+        REGRA DO GERADOR: Se for solicitado gerar uma base de dados ou simulações, responda obrigatoriamente em formato de Tabela Markdown (separada por |).
+        
+        DADOS DE CONSULTA DA BASE NATURA (ANP, FIPE, ANTT, Taxas): {contexto_ia}"""
         
         if "chat" not in st.session_state:
             st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
@@ -258,23 +284,39 @@ if not df_rotas.empty:
         for m in st.session_state.msgs:
             with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Ex: Gere uma base simulando rotas para o Norte...")
+        pergunta = st.chat_input("Ex: Onde estão as minhas oportunidades de saving?")
         if pergunta:
             st.chat_message("user").markdown(pergunta)
             st.session_state.msgs.append({"role": "user", "content": pergunta})
             
             with st.chat_message("assistant"):
                 try:
-                    with st.spinner("Pensando..."):
+                    with st.spinner("Analisando mercado e calculando savings..."):
                         res = st.session_state.chat.send_message(pergunta).text
                     st.markdown(res)
                     st.session_state.msgs.append({"role": "assistant", "content": res})
                     salvar_historico_ia(pergunta, res)
                     
+                    # --- INTERCEPTADOR AUTOMÁTICO DE TABELAS PARA O GOOGLE SHEETS ---
                     if "|" in res and "---" in res:
-                        linhas = [l.strip() for l in res.split('\n') if '|' in l and '---' not in l]
-                        if len(linhas) > 1:
-                            csv_str = "\n".join([";".join([c.strip() for c in l.strip('|').split('|')]) for l in linhas])
-                            st.download_button("📥 Baixar Base (CSV)", csv_str.encode('utf-8-sig'), "base_ia.csv", "text/csv")
+                        linhas = res.split('\n')
+                        linhas_tabela = [l.strip() for l in linhas if '|' in l]
+                        
+                        linhas_validas = []
+                        for l in linhas_tabela:
+                            if '---' in l: continue
+                            cols = [c.strip() for c in l.strip('|').split('|')]
+                            if len(cols) > 1:
+                                linhas_validas.append(cols)
+                        
+                        if len(linhas_validas) > 1:
+                            with st.spinner("Carregando simulação direto no Google Sheets..."):
+                                sucesso = salvar_simulacao_sheets(linhas_validas)
+                            if sucesso:
+                                st.success("✨ Nova base de simulação carregada com sucesso na sua planilha consolidada!")
+                                st.markdown(f"🔗 [Clique aqui para abrir a Planilha de Simulações]({LINK_PLANILHA_SIMULACOES})")
+                                
                 except Exception as e: 
                     st.error(f"Erro: {e}")
+else:
+    st.info("Planilha vazia ou carregando...")
