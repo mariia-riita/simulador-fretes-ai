@@ -163,6 +163,7 @@ if not df_rotas.empty:
     col_frete = next((c for c in df_rotas.columns if 'FRETE' in c and 'CONS' in c), None)
     col_pedagio = next((c for c in df_rotas.columns if 'PEDAGIO' in c), None)
     col_vol = next((c for c in df_rotas.columns if 'VOL' in c), None)
+    col_status = next((c for c in df_rotas.columns if 'STATUS' in c), None)
     
     base = df_rotas[col_base].apply(limpar_numero_br) if col_base else pd.Series([0.0]*len(df_rotas))
     contrato = df_rotas[col_contrato].apply(limpar_numero_br) if col_contrato else pd.Series([0.0]*len(df_rotas))
@@ -178,26 +179,29 @@ if not df_rotas.empty:
     df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
+    # Contabilização Inteligente de Desvios ANTT (Acima / Abaixo)
+    rotas_acima = len(df_rotas[df_rotas[col_status].str.lower().str.contains('acima', na=False)]) if col_status else 0
+    rotas_abaixo = len(df_rotas[df_rotas[col_status].str.lower().str.contains('abaixo', na=False)]) if col_status else 0
+    
+    # KPIs
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4 = st.columns(4)
     
     total_rotas = len(df_rotas)
     total_volume = volume.sum()
     total_fretes = df_rotas["Custo_Total_Ponderado"].sum()
-    custo_medio = total_fretes / total_volume if total_volume > 0 else 0
     
     col1.metric("Rotas Ativas", total_rotas)
     col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
-    col3.metric("Custo Médio Real", formatar_kpi_brl(custo_medio))
-    col4.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
+    col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
+    col4.metric("Desvio ANTT (Acima / Abaixo)", f"{rotas_acima} / {rotas_abaixo}", help="Quantidade de rotas operando com tarifas acima (oportunidade de saving) ou abaixo (risco de conformidade) do piso regulamentado.")
 
     st.divider()
 
     col_grafico, col_chat = st.columns([1.2, 1])
 
     with col_grafico:
-        # Adicionada a aba de Gestão & Produtividade
-        aba_barras, aba_mapa, aba_gestao = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional", "📋 Gestão & Produtividade"])
+        aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
         
         with aba_barras:
             st.markdown("### 📊 Custo por CD de Origem")
@@ -207,7 +211,7 @@ if not df_rotas.empty:
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 
-                # ESCUDO ANTI-ANOMALIAS
+                # ESCUDO ANTI-ANOMALIAS (Bloqueia o lixo bilionário)
                 df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
@@ -254,47 +258,41 @@ if not df_rotas.empty:
                     st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
-                
-        with aba_gestao:
-            
-            st.divider()
-            st.markdown("### 🎯 Formulário de Pesquisa: Problemas Mapeados e Foco de Soluções")
-            st.markdown("""
-            Com base nos levantamentos estruturais da operação de Frete Pesado da Natura, o Agente de IA foi projetado para atuar diretamente nos seguintes problemas-foco:
-            * **Anomalias Visíveis de Faturamento:** Bloqueio imediato de erros operacionais de digitação inseridos no OTM (como custos acidentais na casa dos bilhões de reais, gerados por códigos de rastreio ou CNPJs inseridos nas colunas de frete).
-            * **Subutilização de Ativos (Capacidade Desperdiçada):** Identificar quando uma Carreta de 6 eixos foi contratada e cobrada para movimentar volumes leves, propondo imediatamente o downgrade financeiro para veículos menores (Truck/Toco).
-            * **Falta de Memória de Negociação:** Eliminar a perda de dados de simulações diárias feitas pelos analistas, forçando a IA a gravar cada cenário estratégico diretamente em uma base de dados estruturada no Google Sheets de forma cronológica.
-            * **Desalinhamento com o Piso ANTT e Should Cost:** Identificar em tempo real se os contratos vigentes estão coerentes com a realidade de custos de mercado ou se existem flutuações sazonais de retorno vazio que exijam novos modelos de contratação dedicada.
-            """)
 
     with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
-        # O CÉREBRO ATUALIZADO COM OS REQUISITOS DA GESTÃO DO PROJETO
+        # Expansão de Contexto Inteligente das Metricas de Minimo ANTT diretamente para a IA
+        contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO DE FRETE NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas disponíveis para você usar: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
+        
+        # O CÉREBRO ATUALIZADO (DIAGNOSTICO DE PROBLEMAS DO FORMS AUTOMATIZADO)
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
 
-        === PARÂMETROS DE FROTA (Use para simular Should Cost de veículos menores) ===
+        === MAZELAS, GARGALOS E PROBLEMAS INTERNOS (Injetado via Formulário Natura) ===
+        Se o usuário perguntar sobre problemas na base, gargalos, anomalias ou o que deve ser foco de solução, faça esse diagnóstico automaticamente:
+        1. Anomalias do OTM: Erros graves de digitação na planilha onde códigos de rastreio, notas ou CNPJs entram nas colunas de frete, gerando faturamentos absurdos (ex: caso real de Murici com 23 bilhões fictícios).
+        2. Subutilização de Ativos (Capacidade Desperdiçada): Rotas operando com baixíssimo volume faturado em Carretas pesadas (5 ou 6 eixos). Sugira agressivamente o downgrade estratégico para veículos menores (Truck, Toco, VUC) calculando o ganho financeiro.
+        3. Falta de Histórico de Simulações: Perda crônica de inteligência devido a simulações locais não salvas (mitigado pela gravação direta na nova planilha conectada).
+        4. Descoerência de Mercado vs. Oportunidade: Avalie se tarifas acima do Should Cost representam oportunidade de renegociação imediata ou se são questões justificadas pelo mercado (risco regional, retorno vazio).
+
+        === PARÂMETROS DE FROTA (Use para simular veículos menores) ===
         * Carreta (6 Eixos): Capacidade 26-32 Ton | Consumo: 2.2 km/L
-        * Carreta (5 Eixos): Capacidade 20-25 Ton | Consumo: 2.5 km/L
+        * Carreta (5 Eixos): Capacity 20-25 Ton | Consumo: 2.5 km/L
         * Truck (3 Eixos): Capacidade 14 Ton | Consumo: 3.5 km/L | FIPE ref: R$ 350.000
         * Toco (2 Eixos): Capacidade 7-8 Ton | Consumo: 4.5 km/L | FIPE ref: R$ 250.000
         * VUC Urbano (2 Eixos): Capacidade 3-4 Ton | Consumo: 6.5 km/L | FIPE ref: R$ 150.000
 
-        === GESTÃO DO PROJETO E ROI (Mapeado por Maria Rita Ferreira Soares) ===
-        * Ganho de tempo: O processo manual demorava 16h/mês; com a IA demora 5 minutos (15h55min economizadas por mês, 99.5% de ganho de produtividade).
-        * Cronograma: Etapa 1 (Validação Regras - 1 Semana); Etapa 2 (Frota Leve - 2 Semanas); Etapa 3 (Homologação - 3 Semanas); Etapa 4 (Automatização Completa - 1 Mês).
-        * Problemas Foco do Formulário: Bloqueio de anomalias bilionárias de digitação do OTM, identificação de subutilização de frota (carretas vazias), falta de histórico de simulação (resolvido salvando no Sheets) e desalinhamento ANTT/Should Cost.
-
         === DIRETRIZES DE ANÁLISE ===
-        1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare-o com o Piso ANTT e com o custo que a Natura está a pagar.
-        2. Veículos Menores: Se o usuário perguntar sobre rotas específicas e o volume for compatível, sugira agressivamente o uso de Truck, Toco ou VUC para reduzir os custos (mostre a simulação matemática do saving).
-        3. Diagnóstico de Anomalias: Se a Natura estiver pagando muito acima da ANTT/Should Cost, classifique como "Oportunidade de Negociação". Se for justificável, explique como "Questão de Mercado" (risco de roubo, frete de retorno vazio, sazonalidade).
-        4. Contratação: Indique o modelo ideal para cada região (Ex: Frota Dedicada para rotas curtas de alto volume vs Spot/Lotação).
-        
+        1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare com o Piso ANTT e os valores contratuais vigentes.
+        2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$, DIF - % e STATUS. 
+           - Rotas com STATUS "ACIMA" indicam oportunidades de saving na renegociação (o contratado está maior que o mínimo regulamentar e o should cost).
+           - Rotas com STATUS "ABAIXO" indicam potencial desalinhamento legal com o piso mínimo da ANTT ou risco operacional do transportador trabalhando no prejuízo.
+        3. Contratação Regional: Indique se a região exige modelo de Frota Dedicada (fluxo estável) ou Spot/Lotação.
+
         REGRA DO GERADOR: Se for solicitado gerar uma base de dados ou simulações, responda obrigatoriamente em formato de Tabela Markdown (separada por |).
-        
-        DADOS DE CONSULTA DA BASE NATURA (ANP, FIPE, ANTT, Taxas): {contexto_ia}"""
+
+        DADOS DE CONSULTA DA BASE NATURA: {contexto_ia_expandido}"""
         
         if "chat" not in st.session_state:
             st.session_state.chat = genai.GenerativeModel("gemini-3.1-flash-lite-preview", system_instruction=instrucao).start_chat(history=[])
@@ -303,14 +301,14 @@ if not df_rotas.empty:
         for m in st.session_state.msgs:
             with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Ex: Onde estão as minhas oportunidades de saving?")
+        pergunta = st.chat_input("Ex: Quais rotas estão acima do mínimo e onde estão os gargalos?")
         if pergunta:
             st.chat_message("user").markdown(pergunta)
             st.session_state.msgs.append({"role": "user", "content": pergunta})
             
             with st.chat_message("assistant"):
                 try:
-                    with st.spinner("Analisando mercado e calculando savings..."):
+                    with st.spinner("Analisando mercado e calculando desvios..."):
                         res = st.session_state.chat.send_message(pergunta).text
                     st.markdown(res)
                     st.session_state.msgs.append({"role": "assistant", "content": res})
@@ -318,7 +316,7 @@ if not df_rotas.empty:
                     
                     if "|" in res and "---" in res:
                         linhas = res.split('\n')
-                        linhas_tabela = [l.strip() for l in lines if '|' in l]
+                        linhas_tabela = [l.strip() for l in linhas if '|' in l]
                         
                         linhas_validas = []
                         for l in linhas_tabela:
