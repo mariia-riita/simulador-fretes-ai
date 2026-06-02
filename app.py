@@ -196,7 +196,7 @@ if not df_rotas.empty:
     col_grafico, col_chat = st.columns([1.2, 1])
 
     with col_grafico:
-        # ATUALIZAÇÃO REQUISITO MARIA RITA: Adicionada a aba de Gestão & Produtividade
+        # Adicionada a aba de Gestão & Produtividade
         aba_barras, aba_mapa, aba_gestao = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional", "📋 Gestão & Produtividade"])
         
         with aba_barras:
@@ -256,7 +256,7 @@ if not df_rotas.empty:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
                 
         with aba_gestao:
-            # INTERFACE REQUISITOS MARIA RITA FERREIRA SOARES
+            # INTERFACE REQUISITOS
             st.markdown("### ⏱️ Quantificação de Produtividade (Métricas de ROI)")
             col_roi1, col_roi2, col_roi3 = st.columns(3)
             col_roi1.metric("Processo Manual Anterior", "16 horas / mês", help="Levantamento manual da ANP, FIPE e conferências manuais de faturas por e-mail/Excel.")
