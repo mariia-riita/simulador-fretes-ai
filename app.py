@@ -256,22 +256,6 @@ if not df_rotas.empty:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
                 
         with aba_gestao:
-            # INTERFACE REQUISITOS
-            st.markdown("### ⏱️ Quantificação de Produtividade (Métricas de ROI)")
-            col_roi1, col_roi2, col_roi3 = st.columns(3)
-            col_roi1.metric("Processo Manual Anterior", "16 horas / mês", help="Levantamento manual da ANP, FIPE e conferências manuais de faturas por e-mail/Excel.")
-            col_roi2.metric("Processo com Should Cost IA", "5 minutos", help="Processamento imediato via banco de dados conectado e consultas instantâneas em linguagem natural.")
-            col_roi3.metric("Tempo Economizado", "15h 55min", delta="99.5% de Ganho de Eficiência", delta_color="normal")
-            
-            st.divider()
-            st.markdown("### 📅 Cronograma de Trabalho e Próximas Etapas")
-            cronograma_dados = [
-                {"Etapa": "1. Validação de Regras Geográficas", "Prazo Estimado": "1 Semana", "Status": "Em Andamento", "Descrição": "Ajustar tabelas de impostos estaduais e eixos mínimos ANTT com a engenharia da Natura."},
-                {"Etapa": "2. Expansão para Frota Leve", "Prazo Estimado": "2 Semanas", "Status": "Planejado", "Descrição": "Injetar regras de consumo e custos fixos de VUC, Toco e Truck no cérebro da IA para diversificar simulações."},
-                {"Etapa": "3. Homologação de Modelos de Otimização", "Prazo Estimado": "3 Semanas", "Status": "Planejado", "Descrição": "Testar cenários de consolidação de cargas pesadas versus fracionamento regional com o Agente."},
-                {"Etapa": "4. Automatização de Fechamento de Ciclo", "Prazo Estimado": "1 Mês", "Status": "Planejado", "Descrição": "Conexão direta de tabelas de simulações do Sheets com o painel de auditoria de fretes contratados."}
-            ]
-            st.table(pd.DataFrame(cronograma_dados))
             
             st.divider()
             st.markdown("### 🎯 Formulário de Pesquisa: Problemas Mapeados e Foco de Soluções")
