@@ -101,18 +101,16 @@ def salvar_simulacao_sheets(linhas_validas):
         ia_header = linhas_validas[0]
         ia_dados = linhas_validas[1:]
         
-        # Se a planilha estiver virgem (vazia), cria a linha de cabeçalho com carimbo de tempo
         if len(valores_existentes) == 0:
             cabecalho_oficial = ["Data/Hora"] + ia_header
             aba.append_row(cabecalho_oficial)
             
-        # Prepara as linhas de dados acoplando o carimbo de Data/Hora na frente
         linhas_para_salvar = []
         for linha in ia_dados:
-            if linha == ia_header: continue # Evita duplicações acidentais de header
-            linhas_para_salvar.append([data_atual] + linha)
+            if list(linha) == list(ia_header): continue
+            linhas_para_salvar.append([data_atual] + list(linha))
             
-        if lines_para_salvar := linhas_para_salvar:
+        if linhas_para_salvar:
             aba.append_rows(linhas_para_salvar)
             return True
         return False
@@ -198,7 +196,8 @@ if not df_rotas.empty:
     col_grafico, col_chat = st.columns([1.2, 1])
 
     with col_grafico:
-        aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
+        # ATUALIZAÇÃO REQUISITO MARIA RITA: Adicionada a aba de Gestão & Produtividade
+        aba_barras, aba_mapa, aba_gestao = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional", "📋 Gestão & Produtividade"])
         
         with aba_barras:
             st.markdown("### 📊 Custo por CD de Origem")
@@ -207,6 +206,8 @@ if not df_rotas.empty:
             if col_origem in df_rotas.columns:
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
+                
+                # ESCUDO ANTI-ANOMALIAS
                 df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
@@ -253,10 +254,39 @@ if not df_rotas.empty:
                     st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
+                
+        with aba_gestao:
+            # INTERFACE REQUISITOS MARIA RITA FERREIRA SOARES
+            st.markdown("### ⏱️ Quantificação de Produtividade (Métricas de ROI)")
+            col_roi1, col_roi2, col_roi3 = st.columns(3)
+            col_roi1.metric("Processo Manual Anterior", "16 horas / mês", help="Levantamento manual da ANP, FIPE e conferências manuais de faturas por e-mail/Excel.")
+            col_roi2.metric("Processo com Should Cost IA", "5 minutos", help="Processamento imediato via banco de dados conectado e consultas instantâneas em linguagem natural.")
+            col_roi3.metric("Tempo Economizado", "15h 55min", delta="99.5% de Ganho de Eficiência", delta_color="normal")
+            
+            st.divider()
+            st.markdown("### 📅 Cronograma de Trabalho e Próximas Etapas")
+            cronograma_dados = [
+                {"Etapa": "1. Validação de Regras Geográficas", "Prazo Estimado": "1 Semana", "Status": "Em Andamento", "Descrição": "Ajustar tabelas de impostos estaduais e eixos mínimos ANTT com a engenharia da Natura."},
+                {"Etapa": "2. Expansão para Frota Leve", "Prazo Estimado": "2 Semanas", "Status": "Planejado", "Descrição": "Injetar regras de consumo e custos fixos de VUC, Toco e Truck no cérebro da IA para diversificar simulações."},
+                {"Etapa": "3. Homologação de Modelos de Otimização", "Prazo Estimado": "3 Semanas", "Status": "Planejado", "Descrição": "Testar cenários de consolidação de cargas pesadas versus fracionamento regional com o Agente."},
+                {"Etapa": "4. Automatização de Fechamento de Ciclo", "Prazo Estimado": "1 Mês", "Status": "Planejado", "Descrição": "Conexão direta de tabelas de simulações do Sheets com o painel de auditoria de fretes contratados."}
+            ]
+            st.table(pd.DataFrame(cronograma_dados))
+            
+            st.divider()
+            st.markdown("### 🎯 Formulário de Pesquisa: Problemas Mapeados e Foco de Soluções")
+            st.markdown("""
+            Com base nos levantamentos estruturais da operação de Frete Pesado da Natura, o Agente de IA foi projetado para atuar diretamente nos seguintes problemas-foco:
+            * **Anomalias Visíveis de Faturamento:** Bloqueio imediato de erros operacionais de digitação inseridos no OTM (como custos acidentais na casa dos bilhões de reais, gerados por códigos de rastreio ou CNPJs inseridos nas colunas de frete).
+            * **Subutilização de Ativos (Capacidade Desperdiçada):** Identificar quando uma Carreta de 6 eixos foi contratada e cobrada para movimentar volumes leves, propondo imediatamente o downgrade financeiro para veículos menores (Truck/Toco).
+            * **Falta de Memória de Negociação:** Eliminar a perda de dados de simulações diárias feitas pelos analistas, forçando a IA a gravar cada cenário estratégico diretamente em uma base de dados estruturada no Google Sheets de forma cronológica.
+            * **Desalinhamento com o Piso ANTT e Should Cost:** Identificar em tempo real se os contratos vigentes estão coerentes com a realidade de custos de mercado ou se existem flutuações sazonais de retorno vazio que exijam novos modelos de contratação dedicada.
+            """)
 
     with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
+        # O CÉREBRO ATUALIZADO COM OS REQUISITOS DA GESTÃO DO PROJETO
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
 
@@ -266,6 +296,11 @@ if not df_rotas.empty:
         * Truck (3 Eixos): Capacidade 14 Ton | Consumo: 3.5 km/L | FIPE ref: R$ 350.000
         * Toco (2 Eixos): Capacidade 7-8 Ton | Consumo: 4.5 km/L | FIPE ref: R$ 250.000
         * VUC Urbano (2 Eixos): Capacidade 3-4 Ton | Consumo: 6.5 km/L | FIPE ref: R$ 150.000
+
+        === GESTÃO DO PROJETO E ROI (Mapeado por Maria Rita Ferreira Soares) ===
+        * Ganho de tempo: O processo manual demorava 16h/mês; com a IA demora 5 minutos (15h55min economizadas por mês, 99.5% de ganho de produtividade).
+        * Cronograma: Etapa 1 (Validação Regras - 1 Semana); Etapa 2 (Frota Leve - 2 Semanas); Etapa 3 (Homologação - 3 Semanas); Etapa 4 (Automatização Completa - 1 Mês).
+        * Problemas Foco do Formulário: Bloqueio de anomalias bilionárias de digitação do OTM, identificação de subutilização de frota (carretas vazias), falta de histórico de simulação (resolvido salvando no Sheets) e desalinhamento ANTT/Should Cost.
 
         === DIRETRIZES DE ANÁLISE ===
         1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare-o com o Piso ANTT e com o custo que a Natura está a pagar.
@@ -297,10 +332,9 @@ if not df_rotas.empty:
                     st.session_state.msgs.append({"role": "assistant", "content": res})
                     salvar_historico_ia(pergunta, res)
                     
-                    # --- INTERCEPTADOR AUTOMÁTICO DE TABELAS PARA O GOOGLE SHEETS ---
                     if "|" in res and "---" in res:
                         linhas = res.split('\n')
-                        linhas_tabela = [l.strip() for l in linhas if '|' in l]
+                        linhas_tabela = [l.strip() for l in lines if '|' in l]
                         
                         linhas_validas = []
                         for l in linhas_tabela:
