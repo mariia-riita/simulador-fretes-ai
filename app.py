@@ -99,7 +99,7 @@ def salvar_simulacao_sheets(linhas_validas):
         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
         ia_header = linhas_validas[0]
-        ia_dados = linhas_validas[1:]
+        ia_dados = lines_validas = linhas_validas[1:]
         
         if len(valores_existentes) == 0:
             cabecalho_oficial = ["Data/Hora"] + ia_header
@@ -179,13 +179,17 @@ if not df_rotas.empty:
     df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
-    # Contabilização Inteligente de Desvios ANTT (Acima / Abaixo)
-    rotas_acima = len(df_rotas[df_rotas[col_status].str.lower().str.contains('acima', na=False)]) if col_status else 0
-    rotas_abaixo = len(df_rotas[df_rotas[col_status].str.lower().str.contains('abaixo', na=False)]) if col_status else 0
+    # Contabilização de Desvios ANTT usando a coluna STATUS da sua base
+    if col_status:
+        rotas_acima = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ACIMA', na=False)])
+        rotas_abaixo = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ABAIXO', na=False)])
+    else:
+        rotas_acima = 0
+        rotas_abaixo = 0
     
-    # KPIs
+    # --- INTERFACE: CONTROLES DE KPIS NO TOPO ---
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     total_rotas = len(df_rotas)
     total_volume = volume.sum()
@@ -194,7 +198,8 @@ if not df_rotas.empty:
     col1.metric("Rotas Ativas", total_rotas)
     col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
     col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
-    col4.metric("Desvio ANTT (Acima / Abaixo)", f"{rotas_acima} / {rotas_abaixo}", help="Quantidade de rotas operando com tarifas acima (oportunidade de saving) ou abaixo (risco de conformidade) do piso regulamentado.")
+    col4.metric("🔺 Acima da ANTT", f"{rotas_acima} rotas", help="Tarifas maiores que o piso mínimo. Foco de negociação e Saving!")
+    col5.metric("🔻 Abaixo da ANTT", f"{rotas_abaixo} rotas", help="Tarifas abaixo do piso regulamentar por lei. Risco fiscal ou de paralisação.")
 
     st.divider()
 
@@ -211,7 +216,7 @@ if not df_rotas.empty:
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 
-                # ESCUDO ANTI-ANOMALIAS (Bloqueia o lixo bilionário)
+                # ESCUDO ANTI-ANOMALIAS (Filtra o erro bilionário de Murici)
                 df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
@@ -255,40 +260,41 @@ if not df_rotas.empty:
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
                     st.pydeck_chart(pdk.Deck(layers=[camada_origens, camada_destinos, camada_arcos], initial_view_state=visao, map_style=None))
                 else:
-                    st.warning("⚠️ As coordenadas limpadas não geraram pontos válidos.")
+                    st.warning("⚠️ As coordenadas limpas não geraram pontos válidos.")
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
     with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
-        # Expansão de Contexto Inteligente das Metricas de Minimo ANTT diretamente para a IA
-        contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO DE FRETE NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas disponíveis para você usar: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
+        # Conecta os números reais calculados de desvios para a IA saber o cenário atual
+        contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
         
-        # O CÉREBRO ATUALIZADO (DIAGNOSTICO DE PROBLEMAS DO FORMS AUTOMATIZADO)
+        # O CÉREBRO ATUALIZADO (DIAGNOSTICA MALEZAS AUTOMATICAMENTE QUANDO PERGUNTADO)
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
 
-        === MAZELAS, GARGALOS E PROBLEMAS INTERNOS (Injetado via Formulário Natura) ===
-        Se o usuário perguntar sobre problemas na base, gargalos, anomalias ou o que deve ser foco de solução, faça esse diagnóstico automaticamente:
-        1. Anomalias do OTM: Erros graves de digitação na planilha onde códigos de rastreio, notas ou CNPJs entram nas colunas de frete, gerando faturamentos absurdos (ex: caso real de Murici com 23 bilhões fictícios).
-        2. Subutilização de Ativos (Capacidade Desperdiçada): Rotas operando com baixíssimo volume faturado em Carretas pesadas (5 ou 6 eixos). Sugira agressivamente o downgrade estratégico para veículos menores (Truck, Toco, VUC) calculando o ganho financeiro.
-        3. Falta de Histórico de Simulações: Perda crônica de inteligência devido a simulações locais não salvas (mitigado pela gravação direta na nova planilha conectada).
-        4. Descoerência de Mercado vs. Oportunidade: Avalie se tarifas acima do Should Cost representam oportunidade de renegociação imediata ou se são questões justificadas pelo mercado (risco regional, retorno vazio).
+        === DETECÇÃO AUTOMÁTICA DE GARGALOS, MALEZAS E PROBLEMAS (Baseado no Formulário) ===
+        Sempre que o usuário perguntar sobre gargalos, problemas na operação, anomalias ou o que deve ser corrigido, faça esse diagnóstico de forma automática com base nos dados:
+        1. Anomalias do OTM (Erros de Digitação): Erros graves de digitação na planilha onde códigos de rastreamento, notas fiscais ou CNPJs entram nas colunas de frete, gerando faturamentos absurdos (Exemplo real: caso de Murici marcando 23 bilhões fictícios). 
+        2. Subutilização de Ativos (Capacidade Desperdiçada): Identificar rotas operando com baixo peso/volume faturado, mas utilizando Carretas pesadas (5 ou 6 eixos). Sugira agressivamente o uso de veículos menores usando os parâmetros abaixo e calcule a oportunidade de ganho.
+        3. Falta de Histórico de Simulações: Perda crônica de inteligência devido a simulações de frete soltas (resolvido salvando direto na nova planilha conectada).
+        4. Oportunidade vs. Mercado: Se a tarifa contratada está muito acima do Should Cost, aponte como Oportunidade de Negociação imediata. Se houver justificativa regional (falta de frete de retorno, alto risco de roubo de carga), classifique como Questão de Mercado.
 
-        === PARÂMETROS DE FROTA (Use para simular veículos menores) ===
+        === PARÂMETROS DE FROTA LEVE (Cravados na sua memória - Não estão na planilha) ===
+        Use estes números exatos para simular Should Cost de veículos menores quando o volume for baixo:
         * Carreta (6 Eixos): Capacidade 26-32 Ton | Consumo: 2.2 km/L
-        * Carreta (5 Eixos): Capacity 20-25 Ton | Consumo: 2.5 km/L
+        * Carreta (5 Eixos): Capacidade 20-25 Ton | Consumo: 2.5 km/L
         * Truck (3 Eixos): Capacidade 14 Ton | Consumo: 3.5 km/L | FIPE ref: R$ 350.000
         * Toco (2 Eixos): Capacidade 7-8 Ton | Consumo: 4.5 km/L | FIPE ref: R$ 250.000
         * VUC Urbano (2 Eixos): Capacidade 3-4 Ton | Consumo: 6.5 km/L | FIPE ref: R$ 150.000
 
         === DIRETRIZES DE ANÁLISE ===
         1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare com o Piso ANTT e os valores contratuais vigentes.
-        2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$, DIF - % e STATUS. 
-           - Rotas com STATUS "ACIMA" indicam oportunidades de saving na renegociação (o contratado está maior que o mínimo regulamentar e o should cost).
-           - Rotas com STATUS "ABAIXO" indicam potencial desalinhamento legal com o piso mínimo da ANTT ou risco operacional do transportador trabalhando no prejuízo.
-        3. Contratação Regional: Indique se a região exige modelo de Frota Dedicada (fluxo estável) ou Spot/Lotação.
+        2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$, DIF - % e STATUS.
+           - STATUS "ACIMA": Alerte que são focos claros de saving.
+           - STATUS "ABAIXO": Alerte que indicam potencial risco de conformidade legal com a ANTT ou transportador operando no prejuízo.
+        3. Contratação Regional: Indique o modelo ideal para cada região (Ex: Frota Dedicada para rotas curtas de alto volume vs Spot/Lotação).
 
         REGRA DO GERADOR: Se for solicitado gerar uma base de dados ou simulações, responda obrigatoriamente em formato de Tabela Markdown (separada por |).
 
@@ -301,14 +307,14 @@ if not df_rotas.empty:
         for m in st.session_state.msgs:
             with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Ex: Quais rotas estão acima do mínimo e onde estão os gargalos?")
+        pergunta = st.chat_input("Ex: Quais rotas estão acima do mínimo e quais são os gargalos?")
         if pergunta:
             st.chat_message("user").markdown(pergunta)
             st.session_state.msgs.append({"role": "user", "content": pergunta})
             
             with st.chat_message("assistant"):
                 try:
-                    with st.spinner("Analisando mercado e calculando desvios..."):
+                    with st.spinner("Analisando mercado e diagnosticando problemas..."):
                         res = st.session_state.chat.send_message(pergunta).text
                     st.markdown(res)
                     st.session_state.msgs.append({"role": "assistant", "content": res})
