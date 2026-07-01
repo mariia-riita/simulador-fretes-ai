@@ -157,39 +157,42 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- ATUALIZAÇÃO: RADAR DO DIESEL NA SIDEBAR ---
+# --- RADAR DO DIESEL NA SIDEBAR (CORRIGIDO) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
         st.header("⛽ Radar do Diesel S10")
         
-        # Padroniza colunas do arquivo ANP
         df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
         col_preco_diesel = next((c for c in df_anp.columns if 'DIESEL' in c), None)
         col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c), None)
         
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
-            diesel_medio_atual = df_anp[col_preco_diesel].mean()
             
-            # Compara com um valor base histórico de mercado (ex: R$ 6,85) para gerar a seta dinâmica de subiu/desceu
+            # PROTEÇÃO DA VÍRGULA: Se o valor vier como 670.00 ao invés de 6.70, divide por 100 automaticamente
+            df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
+            
+            diesel_medio_atual = df_anp[col_preco_diesel].mean()
             diesel_base_historico = 6.85
             variacao_diesel = diesel_medio_atual - diesel_base_historico
             
-            # Mostra o indicador principal (Se subir, alerta vermelho. Se cair, verde!)
+            # Mensagem contextualizada e clara por extenso
+            st.caption(f"A média atual no país é de R$ {diesel_medio_atual:.2f} por litro.")
+            
+            # Indicador visual com o sufixo /L obrigatório
             st.metric(
-                label="Média Nacional (ANP)", 
-                value=f"R$ {diesel_medio_atual:.2f}", 
-                delta=f"{variacao_diesel:+.2f} vs ref",
-                delta_color="inverse" # Inverte cor (alta de combustível = ruim/vermelho)
+                label="Preço Médio Nacional", 
+                value=f"R$ {diesel_medio_atual:.2f} /L", 
+                delta=f"{variacao_diesel:+.2f} /L vs ref",
+                delta_color="inverse"
             )
             
-            # Identificação automática de extremos
             idx_max = df_anp[col_preco_diesel].idxmax()
             idx_min = df_anp[col_preco_diesel].idxmin()
             
-            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} — R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f}")
-            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} — R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f}")
+            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} — R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f} /L")
+            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} — R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f} /L")
 
 if not df_rotas.empty:
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
@@ -215,7 +218,6 @@ if not df_rotas.empty:
     df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
-    # Contabilização de Desvios ANTT usando a coluna STATUS da sua base
     if col_status:
         rotas_acima = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ACIMA', na=False)])
         rotas_abaixo = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ABAIXO', na=False)])
@@ -223,7 +225,6 @@ if not df_rotas.empty:
         rotas_acima = 0
         rotas_abaixo = 0
     
-    # KPIs principais do topo
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -252,7 +253,6 @@ if not df_rotas.empty:
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 
-                # ESCUDO ANTI-ANOMALIAS (Filtra o erro de digitação de Murici)
                 df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
