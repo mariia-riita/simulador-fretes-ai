@@ -106,9 +106,9 @@ def salvar_simulacao_sheets(linhas_validas):
             aba.append_row(cabecalho_oficial)
             
         linhas_para_salvar = []
-        for Burger in ia_dados:
-            if list(Burger) == list(ia_header): continue
-            linhas_para_salvar.append([data_atual] + list(Burger))
+        for linha in ia_dados:
+            if list(linha) == list(ia_header): continue
+            linhas_para_salvar.append([data_atual] + list(linha))
             
         if linhas_para_salvar:
             aba.append_rows(linhas_para_salvar)
@@ -153,11 +153,11 @@ try:
     contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
     df_anp = pd.DataFrame(dados["anp_bruto"])
 except Exception as e:
-    st.error("Erro de conexão.")
+    st.error(f"Erro de conexão real com o Google Sheets: {e}")
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (PARSE DUPLO INTELIGENTE - SEM DELTA) ---
+# --- RADAR DO DIESEL NA SIDEBAR (DUPLO FORMATO - SEM DELTA) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
@@ -165,7 +165,6 @@ if not df_anp.empty:
         
         df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
         
-        # Filtra automaticamente para suportar o layout novo da ANP enviado por você
         if 'PRODUTO' in df_anp.columns:
             df_anp = df_anp[df_anp['PRODUTO'].astype(str).str.upper().str.contains('DIESEL S10|DIESEL_S10', na=False)]
             
