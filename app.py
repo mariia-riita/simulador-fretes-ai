@@ -106,9 +106,9 @@ def salvar_simulacao_sheets(linhas_validas):
             aba.append_row(cabecalho_oficial)
             
         linhas_para_salvar = []
-        for linha in ia_dados:
-            if list(linha) == list(ia_header): continue
-            linhas_para_salvar.append([data_atual] + list(linha))
+        for Burger in ia_dados:
+            if list(Burger) == list(ia_header): continue
+            linhas_para_salvar.append([data_atual] + list(Burger))
             
         if linhas_para_salvar:
             aba.append_rows(linhas_para_salvar)
@@ -157,7 +157,7 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (INTELIGÊNCIA PARSE DUPLO - SEM DELTAS) ---
+# --- RADAR DO DIESEL NA SIDEBAR (PARSE DUPLO INTELIGENTE - SEM DELTA) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
@@ -165,7 +165,7 @@ if not df_anp.empty:
         
         df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
         
-        # Filtro inteligente: Se for a planilha nova da ANP, filtra apenas a linha do Diesel S10
+        # Filtra automaticamente para suportar o layout novo da ANP enviado por você
         if 'PRODUTO' in df_anp.columns:
             df_anp = df_anp[df_anp['PRODUTO'].astype(str).str.upper().str.contains('DIESEL S10|DIESEL_S10', na=False)]
             
@@ -174,15 +174,12 @@ if not df_anp.empty:
         
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
-            
-            # PROTEÇÃO DA VÍRGULA: Se o valor vier como 719.00 ao invés de 7.19, corrige na hora
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
             
             diesel_medio_atual = df_anp[col_preco_diesel].mean()
             
             st.markdown(f"A média atual do combustível no país é de **R$ {diesel_medio_atual:.2f} por litro**.")
             
-            # KPI limpo sem o parâmetro delta (Fim do fantasma do 0,77)
             st.metric(
                 label="Preço Médio Nacional", 
                 value=f"R$ {diesel_medio_atual:.2f} /L"
