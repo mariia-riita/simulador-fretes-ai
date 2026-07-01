@@ -157,28 +157,32 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (TOTALMENTE LIMPO - SEM DELTA FANTASMA) ---
+# --- RADAR DO DIESEL NA SIDEBAR (INTELIGÊNCIA PARSE DUPLO - SEM DELTAS) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
         st.header("⛽ Radar do Diesel S10")
         
         df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
-        col_preco_diesel = next((c for c in df_anp.columns if 'DIESEL' in c), None)
-        col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c), None)
+        
+        # Filtro inteligente: Se for a planilha nova da ANP, filtra apenas a linha do Diesel S10
+        if 'PRODUTO' in df_anp.columns:
+            df_anp = df_anp[df_anp['PRODUTO'].astype(str).str.upper().str.contains('DIESEL S10|DIESEL_S10', na=False)]
+            
+        col_preco_diesel = next((c for c in df_anp.columns if 'DIESEL' in c or 'REVENDA' in c or 'PRECO' in c), None)
+        col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c or 'ESTADOS' in c), None)
         
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
             
-            # PROTEÇÃO DA VÍRGULA: Corrige automaticamente se o número vier multiplicado do Excel
+            # PROTEÇÃO DA VÍRGULA: Se o valor vier como 719.00 ao invés de 7.19, corrige na hora
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
             
             diesel_medio_atual = df_anp[col_preco_diesel].mean()
             
-            # Texto explicativo por extenso solicitado por você
             st.markdown(f"A média atual do combustível no país é de **R$ {diesel_medio_atual:.2f} por litro**.")
             
-            # Indicador de Preço Médio oficial e limpo (parâmetro delta removido)
+            # KPI limpo sem o parâmetro delta (Fim do fantasma do 0,77)
             st.metric(
                 label="Preço Médio Nacional", 
                 value=f"R$ {diesel_medio_atual:.2f} /L"
