@@ -157,7 +157,7 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (CORRIGIDO) ---
+# --- RADAR DO DIESEL NA SIDEBAR (LIMPO E PRECISO) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
@@ -170,22 +170,15 @@ if not df_anp.empty:
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
             
-            # PROTEÇÃO DA VÍRGULA: Se o valor vier como 670.00 ao invés de 6.70, divide por 100 automaticamente
+            # PROTEÇÃO DA VÍRGULA: Corrige automaticamente se o número vier multiplicado
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
             
             diesel_medio_atual = df_anp[col_preco_diesel].mean()
-            diesel_base_historico = 6.85
-            variacao_diesel = diesel_medio_atual - diesel_base_historico
             
-            # Mensagem contextualizada e clara por extenso
-            st.caption(f"A média atual no país é de R$ {diesel_medio_atual:.2f} por litro.")
-            
-            # Indicador visual com o sufixo /L obrigatório
+            # Mostra o preço médio real de forma limpa e direta por litro
             st.metric(
                 label="Preço Médio Nacional", 
-                value=f"R$ {diesel_medio_atual:.2f} /L", 
-                delta=f"{variacao_diesel:+.2f} /L vs ref",
-                delta_color="inverse"
+                value=f"R$ {diesel_medio_atual:.2f} /L"
             )
             
             idx_max = df_anp[col_preco_diesel].idxmax()
