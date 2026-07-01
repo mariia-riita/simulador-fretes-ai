@@ -99,7 +99,7 @@ def salvar_simulacao_sheets(linhas_validas):
         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
         ia_header = linhas_validas[0]
-        ia_dados = lines_validas = linhas_validas[1:]
+        ia_dados = linhas_validas[1:]
         
         if len(valores_existentes) == 0:
             cabecalho_oficial = ["Data/Hora"] + ia_header
@@ -134,7 +134,7 @@ def ler_base_sheets():
     aba_rotas = planilha.worksheet("Rotas_Ativas").get_all_values()
     df_rotas = pd.DataFrame(aba_rotas[1:], columns=aba_rotas[0]) if len(aba_rotas) > 1 else pd.DataFrame()
     
-    return {"contexto": f"ANP: {anp}\nFIPE: {fipe}\nANTT: {antt}", "tabela": df_rotas}
+    return {"contexto": f"ANP: {anp}\nFIPE: {fipe}\nANTT: {antt}", "tabela": df_rotas, "anp_bruto": anp}
 
 # --- 5. INTERFACE DO USUÁRIO ---
 st.title("🚛 Inteligência de Fretes - Natura")
@@ -151,9 +151,45 @@ with st.sidebar:
 try:
     dados = ler_base_sheets()
     contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
+    df_anp = pd.DataFrame(dados["anp_bruto"])
 except Exception as e:
     st.error("Erro de conexão.")
     df_rotas = pd.DataFrame()
+    df_anp = pd.DataFrame()
+
+# --- ATUALIZAÇÃO: RADAR DO DIESEL NA SIDEBAR ---
+if not df_anp.empty:
+    with st.sidebar:
+        st.write("---")
+        st.header("⛽ Radar do Diesel S10")
+        
+        # Padroniza colunas do arquivo ANP
+        df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
+        col_preco_diesel = next((c for c in df_anp.columns if 'DIESEL' in c), None)
+        col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c), None)
+        
+        if col_preco_diesel and col_sigla_estado:
+            df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
+            diesel_medio_atual = df_anp[col_preco_diesel].mean()
+            
+            # Compara com um valor base histórico de mercado (ex: R$ 6,85) para gerar a seta dinâmica de subiu/desceu
+            diesel_base_historico = 6.85
+            variacao_diesel = diesel_medio_atual - diesel_base_historico
+            
+            # Mostra o indicador principal (Se subir, alerta vermelho. Se cair, verde!)
+            st.metric(
+                label="Média Nacional (ANP)", 
+                value=f"R$ {diesel_medio_atual:.2f}", 
+                delta=f"{variacao_diesel:+.2f} vs ref",
+                delta_color="inverse" # Inverte cor (alta de combustível = ruim/vermelho)
+            )
+            
+            # Identificação automática de extremos
+            idx_max = df_anp[col_preco_diesel].idxmax()
+            idx_min = df_anp[col_preco_diesel].idxmin()
+            
+            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} — R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f}")
+            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} — R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f}")
 
 if not df_rotas.empty:
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
@@ -187,7 +223,7 @@ if not df_rotas.empty:
         rotas_acima = 0
         rotas_abaixo = 0
     
-    # --- INTERFACE: CONTROLES DE KPIS NO TOPO ---
+    # KPIs principais do topo
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -199,7 +235,7 @@ if not df_rotas.empty:
     col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
     col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
     col4.metric("🔺 Acima da ANTT", f"{rotas_acima} rotas", help="Tarifas maiores que o piso mínimo. Foco de negociação e Saving!")
-    col5.metric("🔻 Abaixo da ANTT", f"{rotas_abaixo} rotas", help="Tarifas abaixo do piso regulamentar por lei. Risco fiscal ou de paralisação.")
+    col5.metric("🔻 Abaixo da ANTT", f"{rotas_abaixo} rotas", help="Tarifas abaixo do piso regulamentar por lei. Risco legal ou operacional.")
 
     st.divider()
 
@@ -216,7 +252,7 @@ if not df_rotas.empty:
                 df_rotas[col_origem] = df_rotas[col_origem].astype(str).str.strip().str.upper()
                 df_chart = df_rotas.groupby(col_origem)["Custo_Total_Ponderado"].sum().reset_index()
                 
-                # ESCUDO ANTI-ANOMALIAS (Filtra o erro bilionário de Murici)
+                # ESCUDO ANTI-ANOMALIAS (Filtra o erro de digitação de Murici)
                 df_chart = df_chart[(df_chart["Custo_Total_Ponderado"] > 0) & (df_chart["Custo_Total_Ponderado"] < 50000000)]
                 
                 if not df_chart.empty:
@@ -267,10 +303,8 @@ if not df_rotas.empty:
     with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
-        # Conecta os números reais calculados de desvios para a IA saber o cenário atual
         contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
         
-        # O CÉREBRO ATUALIZADO (DIAGNOSTICA MALEZAS AUTOMATICAMENTE QUANDO PERGUNTADO)
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
 
@@ -291,7 +325,7 @@ if not df_rotas.empty:
 
         === DIRETRIZES DE ANÁLISE ===
         1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare com o Piso ANTT e os valores contratuais vigentes.
-        2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$, DIF - % e STATUS.
+        2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$', 'DIF - %' e STATUS.
            - STATUS "ACIMA": Alerte que são focos claros de saving.
            - STATUS "ABAIXO": Alerte que indicam potencial risco de conformidade legal com a ANTT ou transportador operando no prejuízo.
         3. Contratação Regional: Indique o modelo ideal para cada região (Ex: Frota Dedicada para rotas curtas de alto volume vs Spot/Lotação).
