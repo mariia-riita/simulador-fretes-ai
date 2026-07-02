@@ -311,7 +311,7 @@ if not df_rotas.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    with col_chat:
+with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
         contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
@@ -346,17 +346,23 @@ if not df_rotas.empty:
         DADOS DE CONSULTA DA BASE NATURA: {contexto_ia_expandido}"""
         
         if "chat" not in st.session_state:
-                    configuracao_ia = {
-                        "temperature": 0.5,
-                    }
-                    # Agora sim, passamos a configuracao_ia aqui dentro!
-                    st.session_state.chat = genai.GenerativeModel(
-                        "gemini-3.1-flash-lite-preview", 
-                        system_instruction=instrucao,
-                        generation_config=configuracao_ia  # <--- ESSA LINHA AJUSTA A TEMPERATURA!
-                    ).start_chat(history=[])
-                    
-                    st.session_state.msgs = []
+            configuracao_ia = {
+                "temperature": 0.5,
+            }
+            st.session_state.chat = genai.GenerativeModel(
+                "gemini-3.1-flash-lite-preview", 
+                system_instruction=instrucao,
+                generation_config=configuracao_ia
+            ).start_chat(history=[])
+            st.session_state.msgs = []
+
+        for m in st.session_state.msgs:
+            with st.chat_message(m["role"]): st.markdown(m["content"])
+
+        pergunta = st.chat_input("Ex: Quais rotas estão acima do mínimo e quais são os gargalos?")
+        if pergunta:
+            st.chat_message("user").markdown(pergunta)
+            st.session_state.msgs.append({"role": "user", "content": pergunta})
             
             with st.chat_message("assistant"):
                 try:
