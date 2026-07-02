@@ -59,7 +59,7 @@ def limpar_coordenada(coord):
 def formatar_kpi_brl(valor):
     if pd.isna(valor) or valor == 0: return "R$ 0,00"
     if valor >= 1_000_000_000: return f"R$ {valor / 1_000_000_000:.2f} Bi".replace(".", ",")
-    elif valor >= 1_000_000: return f"R$ {valor / 1_000_000:.2f} Mi".replace(".", ",")
+    elif valor >= 1_000_000: return f"R$ {valor / 1_000:.2f} Mi".replace(".", ",")
     elif valor >= 1_000: return f"R$ {valor / 1_000:.2f} mil".replace(".", ",")
     else: return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -99,7 +99,7 @@ def salvar_simulacao_sheets(linhas_validas):
         data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
         ia_header = linhas_validas[0]
-        ia_dados = linhas_validas[1:]
+        ia_dados = lines_validas = linhas_validas[1:]
         
         if len(valores_existentes) == 0:
             cabecalho_oficial = ["Data/Hora"] + ia_header
@@ -179,7 +179,6 @@ if not df_anp.empty:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
             
             # 🛡️ O ESCUDO ANTI-ZERO: Filtra e mantém apenas preços reais acima de R$ 1,00
-            # Isso elimina linhas vazias do Excel e impede que o menor valor venha zerado!
             df_diesel_valido = df_anp[df_anp[col_preco_diesel] > 1.0].copy()
             
             # Se a planilha trouxer uma linha de resumo do "BRASIL", tiramos ela para não duplicar a média dos estados
@@ -311,7 +310,7 @@ if not df_rotas.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-with col_chat:
+    with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
         contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
