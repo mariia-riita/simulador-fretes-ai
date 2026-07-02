@@ -189,7 +189,6 @@ if not df_anp.empty:
             if not df_diesel_valido.empty:
                 diesel_medio_atual = df_diesel_valido[col_preco_diesel].mean()
                 
-                st.caption(f"📊 Analisando a coluna: **{col_preco_diesel}**")
                 st.markdown(f"A média atual do combustível no país é de **R$ {diesel_medio_atual:.2f} por litro**.")
                 
                 st.metric(
