@@ -157,7 +157,7 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (TOTALMENTE CORRIGIDO) ---
+# --- RADAR DO DIESEL NA SIDEBAR ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
@@ -168,37 +168,43 @@ if not df_anp.empty:
         if 'PRODUTO' in df_anp.columns:
             df_anp = df_anp[df_anp['PRODUTO'].astype(str).str.upper().str.contains('DIESEL S10|DIESEL_S10', na=False)]
             
-        # 🔥 NOVA BUSCA INTELIGENTE: Procura primeiro por colunas que tenham PREÇO e MÉDIO ao mesmo tempo
         col_preco_diesel = next((c for c in df_anp.columns if ('PRECO' in c or 'PREÇO' in c) and ('MEDIO' in c or 'MÉDIO' in c)), None)
-        
-        # Se não achar, busca por preço geral, mas ignora terminantemente colunas de contagem de postos
         if not col_preco_diesel:
             col_preco_diesel = next((c for c in df_anp.columns if ('DIESEL' in c or 'REVENDA' in c or 'PRECO' in c) and 'POSTO' not in c and 'QTD' not in c and 'NUMERO' not in c), None)
             
         col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c or 'ESTADOS' in c), None)
         
-        # Texto de garantia para você ver na tela qual coluna ele fisgou
-        if col_preco_diesel:
-            st.caption(f"📊 Analisando a coluna: **{col_preco_diesel}**")
-        
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(lambda x: x / 100.0 if x > 20.0 else x)
             
-            diesel_medio_atual = df_anp[col_preco_diesel].mean()
+            # 🛡️ O ESCUDO ANTI-ZERO: Filtra e mantém apenas preços reais acima de R$ 1,00
+            # Isso elimina linhas vazias do Excel e impede que o menor valor venha zerado!
+            df_diesel_valido = df_anp[df_anp[col_preco_diesel] > 1.0].copy()
             
-            st.markdown(f"A média atual do combustível no país é de **R$ {diesel_medio_atual:.2f} por litro**.")
+            # Se a planilha trouxer uma linha de resumo do "BRASIL", tiramos ela para não duplicar a média dos estados
+            df_diesel_valido = df_diesel_valido[df_diesel_valido[col_sigla_estado].astype(str).str.upper() != 'BR']
+            df_diesel_valido = df_diesel_valido[df_diesel_valido[col_sigla_estado].astype(str).str.upper() != 'BRASIL']
             
-            st.metric(
-                label="Preço Médio Nacional", 
-                value=f"R$ {diesel_medio_atual:.2f} /L"
-            )
-            
-            idx_max = df_anp[col_preco_diesel].idxmax()
-            idx_min = df_anp[col_preco_diesel].idxmin()
-            
-            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} — R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f} /L")
-            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} — R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f} /L")
+            if not df_diesel_valido.empty:
+                diesel_medio_atual = df_diesel_valido[col_preco_diesel].mean()
+                
+                st.caption(f"📊 Analisando a coluna: **{col_preco_diesel}**")
+                st.markdown(f"A média atual do combustível no país é de **R$ {diesel_medio_atual:.2f} por litro**.")
+                
+                st.metric(
+                    label="Preço Médio Nacional", 
+                    value=f"R$ {diesel_medio_atual:.2f} /L"
+                )
+                
+                # Faz a busca do maior e menor apenas nas linhas que têm preços de verdade
+                idx_max = df_diesel_valido[col_preco_diesel].idxmax()
+                idx_min = df_diesel_valido[col_preco_diesel].idxmin()
+                
+                st.markdown(f"🔺 **Mais Caro:** {df_diesel_valido.loc[idx_max, col_sigla_estado]} — R$ {df_diesel_valido.loc[idx_max, col_preco_diesel]:.2f} /L")
+                st.markdown(f"🔻 **Mais Barato:** {df_diesel_valido.loc[idx_min, col_sigla_estado]} — R$ {df_diesel_valido.loc[idx_min, col_preco_diesel]:.2f} /L")
+            else:
+                st.warning("⚠️ Nenhum preço válido encontrado na coluna selecionada.")
 
 if not df_rotas.empty:
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
