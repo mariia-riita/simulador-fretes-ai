@@ -157,7 +157,7 @@ except Exception as e:
     df_rotas = pd.DataFrame()
     df_anp = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (DUPLO FORMATO - SEM DELTA) ---
+# --- RADAR DO DIESEL NA SIDEBAR (TOTALMENTE CORRIGIDO) ---
 if not df_anp.empty:
     with st.sidebar:
         st.write("---")
@@ -168,8 +168,18 @@ if not df_anp.empty:
         if 'PRODUTO' in df_anp.columns:
             df_anp = df_anp[df_anp['PRODUTO'].astype(str).str.upper().str.contains('DIESEL S10|DIESEL_S10', na=False)]
             
-        col_preco_diesel = next((c for c in df_anp.columns if 'DIESEL' in c or 'REVENDA' in c or 'PRECO' in c), None)
+        # 🔥 NOVA BUSCA INTELIGENTE: Procura primeiro por colunas que tenham PREÇO e MÉDIO ao mesmo tempo
+        col_preco_diesel = next((c for c in df_anp.columns if ('PRECO' in c or 'PREÇO' in c) and ('MEDIO' in c or 'MÉDIO' in c)), None)
+        
+        # Se não achar, busca por preço geral, mas ignora terminantemente colunas de contagem de postos
+        if not col_preco_diesel:
+            col_preco_diesel = next((c for c in df_anp.columns if ('DIESEL' in c or 'REVENDA' in c or 'PRECO' in c) and 'POSTO' not in c and 'QTD' not in c and 'NUMERO' not in c), None)
+            
         col_sigla_estado = next((c for c in df_anp.columns if 'SIGLA' in c or 'ESTADO' in c or 'ESTADOS' in c), None)
+        
+        # Texto de garantia para você ver na tela qual coluna ele fisgou
+        if col_preco_diesel:
+            st.caption(f"📊 Analisando a coluna: **{col_preco_diesel}**")
         
         if col_preco_diesel and col_sigla_estado:
             df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(limpar_numero_br)
@@ -187,8 +197,8 @@ if not df_anp.empty:
             idx_max = df_anp[col_preco_diesel].idxmax()
             idx_min = df_anp[col_preco_diesel].idxmin()
             
-            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f} /L")
-            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f} /L")
+            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} — R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f} /L")
+            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} — R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f} /L")
 
 if not df_rotas.empty:
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
