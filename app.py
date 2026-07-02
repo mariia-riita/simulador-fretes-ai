@@ -187,8 +187,8 @@ if not df_anp.empty:
             idx_max = df_anp[col_preco_diesel].idxmax()
             idx_min = df_anp[col_preco_diesel].idxmin()
             
-            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} R$ /L")
-            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} R$ /L")
+            st.markdown(f"🔺 **Mais Caro:** {df_anp.loc[idx_max, col_sigla_estado]} R$ {df_anp.loc[idx_max, col_preco_diesel]:.2f} /L")
+            st.markdown(f"🔻 **Mais Barato:** {df_anp.loc[idx_min, col_sigla_estado]} R$ {df_anp.loc[idx_min, col_preco_diesel]:.2f} /L")
 
 if not df_rotas.empty:
     df_rotas.columns = df_rotas.columns.astype(str).str.replace('\n', '').str.replace('\r', '').str.strip().str.upper()
