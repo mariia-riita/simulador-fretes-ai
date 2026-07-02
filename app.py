@@ -10,6 +10,25 @@ import pydeck as pdk
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide")
+# --- 1.1 FONTE POPPINS CUSTOMIZADA ---
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+    /* Aplica a fonte globalmente no app inteiro */
+    html, body, [data-testid="stAppViewContainer"], .stApp {
+        font-family: 'Poppins', sans-serif !important;
+    }
+    
+    /* Força títulos, botões e textos a usarem Poppins */
+    h1, h2, h3, h4, h5, h6, p, label, span, button, .stButton>button {
+        font-family: 'Poppins', sans-serif !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # --- 2. CONSTANTES E SEGURANÇA ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
