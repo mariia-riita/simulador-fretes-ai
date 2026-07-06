@@ -77,10 +77,10 @@ def limpar_coordenada(coord):
 
 def formatar_kpi_brl(valor):
     if pd.isna(valor) or valor == 0: return "R$ 0,00"
-    if valor >= 1_000_000_000: return f"R$ {valor / 1_000_000_000:.2f} Bi".replace(".", ",")
-    elif valor >= 1_000_000: return f"R$ {valor / 1_000:.2f} Mi".replace(".", ",")
-    elif valor >= 1_000: return f"R$ {valor / 1_000:.2f} mil".replace(".", ",")
-    else: return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Divide por 1.000 para converter em milhares
+    valor_em_milhares = valor / 1000.0
+    # Formata com o ponto separador de milhar brasileiro
+    return f"R$ {valor_em_milhares:,.0f} mil".replace(",", ".")
 
 def salvar_historico_ia(pergunta, resposta):
     """Salva o log de conversas na planilha principal"""
