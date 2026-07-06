@@ -16,13 +16,13 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
-    /* Aplica a fonte globalmente no app inteiro */
+    /* Aplica a fonte de forma geral no app */
     html, body, [data-testid="stAppViewContainer"], .stApp {
-        font-family: 'Poppins', sans-serif !important;
+        font-family: 'Poppins', sans-serif;
     }
     
-    /* Força títulos, botões e textos a usarem Poppins */
-    h1, h2, h3, h4, h5, h6, p, label, span, button, .stButton>button {
+    /* Aplica apenas em textos e títulos, removendo o 'span' que quebrava os ícones */
+    h1, h2, h3, h4, h5, h6, p, label, button, .stButton>button {
         font-family: 'Poppins', sans-serif !important;
     }
     </style>
