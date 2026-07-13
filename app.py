@@ -307,7 +307,7 @@ if not df_rotas.empty:
             col_lon_d = next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
             
             if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
-                # Criamos uma cópia limpa ignorando linhas onde as colunas de ID estão totalmente vazias
+                st.write("O que o robô está lendo na planilha online:", df_rotas[[col_lat_o, col_lon_o]].head(5))
                 df_mapa_limpo = df_rotas.dropna(subset=[col_lat_o, col_lon_o]).copy()
                 
                 df_mapa_limpo['lat_origem'] = df_mapa_limpo[col_lat_o].apply(limpar_coordenada)
