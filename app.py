@@ -56,19 +56,26 @@ def limpar_numero_br(valor):
         return 0.0
 
 def limpar_coordenada(coord):
-    """Recupera coordenadas mesmo se o Excel tiver engolido a vírgula"""
+    """Recupera coordenadas mesmo se tiver múltiplos pontos, vírgulas ou símbolos de graus"""
     if pd.isna(coord): return None
-    c_str = str(coord).strip().replace('"', '').replace(' ', '')
-    if not c_str or c_str.upper() in ['NAN', 'NULL', 'NONE']: return None
+    # Remove aspas, espaços e símbolos de graus comuns em copiar/colar
+    c_str = str(coord).strip().replace('"', '').replace(' ', '').replace('°', '')
+    if not c_str or c_str.upper() in ['NAN', 'NULL', 'NONE', '-', '']: return None
     
+    # Caso 1: Tem ponto e vírgula misturados (ex: -12.253,585)
     if '.' in c_str and ',' in c_str:
         c_str = c_str.replace('.', '').replace(',', '.')
+    # Caso 2: Tem apenas vírgula (ex: -12,253585)
     elif ',' in c_str:
         c_str = c_str.replace(',', '.')
+    # Caso 3: Erro de texto com múltiplos pontos (ex: -23.308.172)
+    elif c_str.count('.') > 1:
+        c_str = c_str.replace('.', '')
         
     try:
         val = float(c_str)
         if val == 0.0: return None
+        # Ajusta caso o Excel tenha engolido o ponto decimal
         while abs(val) > 180:
             val = val / 10.0
         return val
@@ -248,10 +255,10 @@ if not df_rotas.empty:
     df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
     
     if col_status:
-        rotas_acima = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ACIMA', na=False)])
+        rotas_dentro = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('DENTRO', na=False)])
         rotas_abaixo = len(df_rotas[df_rotas[col_status].astype(str).str.upper().str.contains('ABAIXO', na=False)])
     else:
-        rotas_acima = 0
+        rotas_dentro = 0
         rotas_abaixo = 0
     
     st.markdown("### 🎯 Resumo da Operação (Ponderado)")
@@ -264,7 +271,7 @@ if not df_rotas.empty:
     col1.metric("Rotas Ativas", total_rotas)
     col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
     col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
-    col4.metric("🔺 Acima da ANTT", f"{rotas_acima} rotas", help="Tarifas maiores que o piso mínimo. Foco de negociação e Saving!")
+    col4.metric("🔺 Dentro da ANTT", f"{rotas_dentro} rotas", help="Tarifas maiores que o piso mínimo. Foco de negociação e Saving!")
     col5.metric("🔻 Abaixo da ANTT", f"{rotas_abaixo} rotas", help="Tarifas abaixo do piso regulamentar por lei. Risco legal ou operacional.")
 
     st.divider()
@@ -300,15 +307,19 @@ if not df_rotas.empty:
             col_lon_d = next((c for c in df_rotas.columns if 'LON' in c and 'DEST' in c), None)
             
             if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
-                df_rotas['lat_origem'] = df_rotas[col_lat_o].apply(limpar_coordenada)
-                df_rotas['lon_origem'] = df_rotas[col_lon_o].apply(limpar_coordenada)
-                df_rotas['lat_destino'] = df_rotas[col_lat_d].apply(limpar_coordenada)
-                df_rotas['lon_destino'] = df_rotas[col_lon_d].apply(limpar_coordenada)
+                # Criamos uma cópia limpa ignorando linhas onde as colunas de ID estão totalmente vazias
+                df_mapa_limpo = df_rotas.dropna(subset=[col_lat_o, col_lon_o]).copy()
                 
-                df_mapa = df_rotas.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
+                df_mapa_limpo['lat_origem'] = df_mapa_limpo[col_lat_o].apply(limpar_coordenada)
+                df_mapa_limpo['lon_origem'] = df_mapa_limpo[col_lon_o].apply(limpar_coordenada)
+                df_mapa_limpo['lat_destino'] = df_mapa_limpo[col_lat_d].apply(limpar_coordenada)
+                df_mapa_limpo['lon_destino'] = df_mapa_limpo[col_lon_d].apply(limpar_coordenada)
+                
+                # Remove as linhas que realmente não têm coordenadas válidas
+                df_mapa = df_mapa_limpo.dropna(subset=['lat_origem', 'lon_origem', 'lat_destino', 'lon_destino'])
                 
                 if not df_mapa.empty:
-                    st.caption(f"✨ Exibindo {len(df_mapa)} rotas conectadas no mapa.")
+                    st.caption(f"✨ Sucesso! Exibindo {len(df_mapa)} rotas ativas mapeadas no ecrã.")
                     camada_origens = pdk.Layer(
                         "ScatterplotLayer", data=df_mapa, get_position=["lon_origem", "lat_origem"],
                         get_color=[255, 140, 0, 200], get_radius=15000, pickable=True
@@ -325,14 +336,14 @@ if not df_rotas.empty:
                     visao = pdk.ViewState(latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45)
                     st.pydeck_chart(pdk.Deck(layers=[camada_origens, camada_destinos, camada_arcos], initial_view_state=visao, map_style=None))
                 else:
-                    st.warning("⚠️ As coordenadas limpas não geraram pontos válidos.")
+                    st.warning("⚠️ As coordenadas limpas não geraram pontos válidos. Verifique os dados das primeiras 952 linhas da planilha.")
             else:
-                st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
+                st.error("⚠️ Colunas de Latitude/Longitude não foram mapeadas corretamente pelo sistema.")
 
     with col_chat:
         st.subheader("🤖 Agente Estratégico de Fretes")
         
-        contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT: {rotas_acima}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
+        contexto_ia_expandido = contexto_ia + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela: {len(df_rotas)}\n- Rotas com frete DENTRO do Mínimo ANTT: {rotas_dentro}\n- Rotas com frete ABAIXO do Mínimo ANTT: {rotas_abaixo}\nColunas analíticas de desvios disponíveis na tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
         
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado?"
@@ -355,7 +366,7 @@ if not df_rotas.empty:
         === DIRETRIZES DE ANÁLISE ===
         1. O Frete Mais Justo: Calcule o 'Should Cost' cruzando os dados de consumo acima com o Diesel (ANP) e as taxas estaduais. Compare com o Piso ANTT e os valores contratuais vigentes.
         2. Análise de Desvios (Mínimo Regulamentar): Use as colunas de FRETE MINIMO, DIF R$', 'DIF - %' e STATUS.
-           - STATUS "ACIMA": Alerte que são focos claros de saving.
+           - STATUS "Dentro": Alerte que são focos claros de saving.
            - STATUS "ABAIXO": Alerte que indicam potencial risco de conformidade legal com a ANTT ou transportador operando no prejuízo.
         3. Contratação Regional: Indique o modelo ideal para cada região (Ex: Frota Dedicada para rotas curtas de alto volume vs Spot/Lotação).
 
@@ -377,7 +388,7 @@ if not df_rotas.empty:
         for m in st.session_state.msgs:
             with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        pergunta = st.chat_input("Ex: Quais rotas estão acima do mínimo e quais são os gargalos?")
+        pergunta = st.chat_input("Ex: Quais rotas estão dentro do mínimo e quais são os gargalos?")
         if pergunta:
             st.chat_message("user").markdown(pergunta)
             st.session_state.msgs.append({"role": "user", "content": pergunta})
