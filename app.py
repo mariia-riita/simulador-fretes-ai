@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
+import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -35,6 +36,7 @@ st.markdown(
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
 LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
+LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
@@ -72,7 +74,6 @@ def limpar_coordenada(coord):
     return None
   c_str = str(coord).strip().replace('"', "").replace(" ", "").replace("°", "")
 
-  # Trata formatação acidental de porcentagem do Google Sheets (ex: -1225,36% -> -12.2536)
   eh_porcentagem = "%" in c_str
   c_str = c_str.replace("%", "")
 
@@ -186,7 +187,7 @@ def salvar_simulacao_sheets(linhas_validas):
     return False
 
 
-# --- 4. CARREGAMENTO ---
+# --- 4. CARREGAMENTO DE DADOS ---
 @st.cache_data(ttl=600)
 def ler_base_sheets():
   escopos = [
@@ -341,6 +342,10 @@ if not df_anp.empty:
         st.warning(
             "⚠️ Nenhum preço válido encontrado na coluna selecionada."
         )
+
+    # 📊 EMBUTINDO O POWERBI OFICIAL DA ANP DIRETO NA SIDEBAR
+    with st.expander("📊 Abrir Painel Oficial ANP (PowerBI)"):
+      components.iframe(LINK_POWERBI_ANP, height=450, scrolling=True)
 
 if not df_rotas.empty:
   df_rotas.columns = (
@@ -569,42 +574,62 @@ if not df_rotas.empty:
   with col_chat:
     st.subheader("🤖 Agente Estratégico de Fretes")
 
+    # 🛡️ PREPARANDO AS ROTAS REAIS PARA A MEMÓRIA DA IA (EVITA ALUCINAÇÃO)
+    resumo_rotas_abaixo = ""
+    if not df_rotas.empty and "STATUS" in df_rotas.columns:
+      df_temp = df_rotas.copy()
+      df_temp["STATUS_CLEAN"] = (
+          df_temp["STATUS"].astype(str).str.strip().str.lower()
+      )
+      df_abaixo_real = df_temp[
+          df_temp["STATUS_CLEAN"].str.contains("abaixo", na=False)
+      ].copy()
+
+      if "DIF R$ ANTT" in df_abaixo_real.columns:
+        df_abaixo_real["DIF_R$_NUM"] = df_abaixo_real["DIF R$ ANTT"].apply(
+            limpar_numero_br
+        )
+        top_15_abaixo = df_abaixo_real.sort_values(
+            by="DIF_R$_NUM", ascending=True
+        ).head(15)
+
+        cols_prompt = [
+            "NOME_TRANSPORTADORA",
+            "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
+            "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
+            "PERFIL_GRUPO_DE_EQUIPAMENTO",
+            "Frete Considerado",
+            "Frete Minimo",
+            "DIF R$ ANTT",
+            "DIF - %",
+        ]
+        cols_presentes = [c for c in cols_prompt if c in top_15_abaixo.columns]
+        resumo_rotas_abaixo = top_15_abaixo[cols_presentes].to_string(
+            index=False
+        )
+
     contexto_ia_expandido = (
         contexto_ia
         + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela:"
         f" {len(df_rotas)}\n- Rotas com frete DENTRO do Mínimo ANTT:"
         f" {rotas_dentro}\n- Rotas com frete ABAIXO do Mínimo ANTT:"
-        f" {rotas_abaixo}\nColunas analíticas de desvios disponíveis na"
-        " tabela: 'FRETE MINIMO', 'DIF R$', 'DIF - %', 'STATUS'."
+        f" {rotas_abaixo}\n\n[TABELA REAL - TOP ROTAS ABAIXO DA"
+        f" ANTT]:\n{resumo_rotas_abaixo}"
     )
 
     instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado e qual a composição detalhada do Should Cost?"
 
-        === COMPOSIÇÃO OBRIGATÓRIA DO SHOULD COST (COMPONENTES DE FRETE) ===
-        Sempre que calcular, analisar ou simular o Should Cost de uma rota, apresente a COMPOSIÇÃO DETALHADA dos custos do frete em forma de tópicos ou tabela:
-        1. CUSTOS VARIÁVEIS DE VIAGEM:
-           - Combustível (Diesel S10): Baseado no consumo do veículo (km/L) e no preço médio da ANP do estado de destino/origem.
-           - Pneus e Desgaste de Rodagem: Custo proporcional estimado por km rodado.
-           - Lubrificante, Lavagem e Manutenção Prev/Corr: Percentual aplicado sobre rodagem (conforme aba Parametros_Custos).
-        2. CUSTOS FIXOS DO ATIVO (Proporcionalizados por dia/viagem):
-           - Cavalo Mecânico e Baú/Carreta: Custo de capital/depreciação baseado no valor FIPE (ex: Volvo FH, DAF).
-           - Impostos e Licenciamento: IPVA estadual, Licenciamento anual, Tacógrafo e Seguro da Frota (conforme Parametros_Custos).
-        3. CUSTOS OPERACIONAIS E MARGEM:
-           - Pedágio e Ad Valorem (Seguro Carga).
-           - Margem do Transportador: Lucro operacional estimado do parceiro (10% a 15%).
+        === REGRA CRÍTICA ANTI-ALUCINAÇÃO (MUITO IMPORTANTE) ===
+        1. Responda a perguntas sobre rotas específicas, rankings ou desvios APENAS e EXCLUSIVAMENTE utilizando os dados contidos na [TABELA REAL - TOP ROTAS ABAIXO DA ANTT] acima.
+        2. NUNCA invente, crie ou adivinhe nomes de cidades, rotas ou transportadoras que não estejam presentes no texto fornecido.
+        3. Se for perguntado por uma rota fora da tabela, declare exatamente quais são as rotas reais presentes na base.
 
-        === DETECÇÃO AUTOMÁTICA DE GARGALOS E ANOMALIAS ===
-        1. Anomalias do OTM: Erros graves de digitação na planilha onde códigos de rastreamento, NFs ou CNPJs entram nas colunas de frete (ex: Murici marcando bilhões).
-        2. Subutilização de Ativos: Identificar rotas com baixo volume operando com Carretas (5 ou 6 eixos) e sugerir a troca por veículos menores (Truck/Toco/VUC).
-        3. Oportunidade vs. Mercado: Se a tarifa contratada está acima do Should Cost, classifique como Oportunidade de Negociação.
-
-        === PARÂMETROS DE FROTA LEVE ===
-        * Carreta (6 Eixos): Capacidade 26-32 Ton | Consumo: 2.2 km/L
-        * Carreta (5 Eixos): Capacidade 20-25 Ton | Consumo: 2.5 km/L
-        * Truck (3 Eixos): Capacidade 14 Ton | Consumo: 3.5 km/L | FIPE ref: R$ 350.000
-        * Toco (2 Eixos): Capacidade 7-8 Ton | Consumo: 4.5 km/L | FIPE ref: R$ 250.000
-        * VUC Urbano (2 Eixos): Capacidade 3-4 Ton | Consumo: 6.5 km/L | FIPE ref: R$ 150.000
+        === COMPOSIÇÃO OBRIGATÓRIA DO SHOULD COST ===
+        Sempre que calcular ou simular o Should Cost de uma rota, apresente a COMPOSIÇÃO DETALHADA dos custos do frete em 3 blocos:
+        1. CUSTOS VARIÁVEIS: Combustível (Diesel S10), Pneus/Desgaste de rodagem, Lubrificante e Manutenção.
+        2. CUSTOS FIXOS DO ATIVO: Cavalo Mecânico e Baú/Carreta (Depreciação FIPE), IPVA, Licenciamento, Tacógrafo e Seguro.
+        3. CUSTOS OPERACIONAIS E MARGEM: Pedágio, Ad Valorem e Margem do Transportador (10% a 15%).
 
         REGRA DO GERADOR: Se for solicitado gerar uma base de dados ou simulações, responda obrigatoriamente em formato de Tabela Markdown (separada por |).
 
@@ -612,8 +637,8 @@ if not df_rotas.empty:
 
     if "chat" not in st.session_state:
       configuracao_ia = {
-          "temperature": 0.5,
-      }
+          "temperature": 0.2
+      }  # Temperatura reduzida para 0.2 para travar alucinações
       st.session_state.chat = genai.GenerativeModel(
           "gemini-3.1-flash-lite-preview",
           system_instruction=instrucao,
@@ -626,8 +651,7 @@ if not df_rotas.empty:
         st.markdown(m["content"])
 
     pergunta = st.chat_input(
-        "Ex: Qual a composição detalhada do Should Cost de SP para o"
-        " Nordeste?"
+        "Ex: Quais são as top 10 rotas abaixo da ANTT e sua composição?"
     )
     if pergunta:
       st.chat_message("user").markdown(pergunta)
