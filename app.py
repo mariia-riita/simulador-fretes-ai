@@ -454,7 +454,7 @@ if not df_rotas.empty:
             " encontrada!"
         )
 
-    # 🗺️ ABA DO MAPA COM PALETA TÉRMICA E SEM EFEITO ESPAGUETE (SEM LINHAS)
+    # 🗺️ ABA DO MAPA COM LEGENDA TÉRMICA, ARCOS E DESTINOS CIANO DE VOLTA!
     with aba_mapa:
       col_lat_o = next(
           (c for c in df_rotas.columns if "LAT" in c and "ORIG" in c), None
@@ -494,35 +494,35 @@ if not df_rotas.empty:
 
           max_dens = df_mapa["densidade_origem"].max()
 
-          # Escala Térmica Ajustada para as Origens
+          # Escala Térmica Ajustada para as Origens (Laranja/Vermelho)
           def gerar_cor_densidade(qtd):
             ratio = qtd / max_dens if max_dens > 0 else 0
             if ratio > 0.60:
-              return [230, 25, 25, 230]  # Vermelho Quente (Alta Concentração)
+              return [230, 25, 25, 230]  # Vermelho Quente
             elif ratio > 0.25:
-              return [255, 130, 0, 200]  # Laranja (Média Concentração)
+              return [255, 130, 0, 200]  # Laranja
             else:
-              return [255, 215, 0, 180]  # Amarelo (Baixa Concentração)
+              return [255, 215, 0, 180]  # Amarelo
 
           df_mapa["cor_origem"] = df_mapa["densidade_origem"].apply(
               gerar_cor_densidade
           )
 
-          # --- LEGENDA HARMONIZADA ---
+          # --- LEGENDA DO MAPA FOCADA NA DENSIDADE E DESTINO ---
           st.markdown(
               """
               <div class="legenda-mapa">
-                  <span style="font-weight:600; color:#FF9900;">📍 Densidade de Origem (Volume/Fluxo):</span>
-                  <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Fluxo</div>
-                  <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Fluxo</div>
-                  <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Ponto Quente (Gargalo/Alta Densidade)</div>
-                  <div class="item-legenda"><span class="bola-legenda" style="background:#B4B4B4;"></span> Destinos</div>
+                  <span style="font-weight:600; color:#FF9900;">📍 Mapa Logístico (Densidade x Fluxo):</span>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Volume</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Volume</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Alto Volume (Gargalo)</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#00C8FF;"></span> Destino Ciano</div>
               </div>
               """,
               unsafe_allow_html=True,
           )
 
-          # --- CAMADAS PYDECK FOCADAS EM CALOR E SEM ARCOS ---
+          # --- CAMADAS PYDECK COMPLETAS ---
           camada_origens = pdk.Layer(
               "ScatterplotLayer",
               data=df_mapa,
@@ -532,24 +532,34 @@ if not df_rotas.empty:
               pickable=True,
           )
           
-          # Destinos em cinza bem sutil apenas para marcação territorial
+          # Destinos azul ciano brilhante!
           camada_destinos = pdk.Layer(
               "ScatterplotLayer",
               data=df_mapa,
               get_position=["lon_destino", "lat_destino"],
-              get_color=[180, 180, 180, 140],
-              get_radius=6000,
+              get_color=[0, 200, 255, 200],
+              get_radius=12000,
+              pickable=True,
+          )
+          
+          # Arcos acompanhando a cor da Origem e pousando no Destino Ciano!
+          camada_arcos = pdk.Layer(
+              "ArcLayer",
+              data=df_mapa,
+              get_source_position=["lon_origem", "lat_origem"],
+              get_target_position=["lon_destino", "lat_destino"],
+              get_source_color="cor_origem",
+              get_target_color=[0, 200, 255, 160],
+              get_width=3,
               pickable=True,
           )
 
           visao = pdk.ViewState(
               latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45
           )
-          
-          # Removido o 'camada_arcos' para evitar o Efeito Espaguete
           st.pydeck_chart(
               pdk.Deck(
-                  layers=[camada_origens, camada_destinos],
+                  layers=[camada_origens, camada_destinos, camada_arcos],
                   initial_view_state=visao,
                   map_style=None,
               )
