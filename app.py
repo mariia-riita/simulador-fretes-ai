@@ -279,7 +279,7 @@ except Exception as e:
   df_rotas = pd.DataFrame()
   df_anp_backup = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (100% AUTOMÁTICO EM PYTHON) ---
+# --- RADAR DO DIESEL NA SIDEBAR (100% ALINHADO COM A ÚLTIMA SEMANA) ---
 df_anp_processar = buscar_diesel_anp_live(df_anp_backup)
 
 if not df_anp_processar.empty:
@@ -291,6 +291,7 @@ if not df_anp_processar.empty:
         df_anp_processar.columns.astype(str).str.strip().str.upper()
     )
 
+    # 1. Filtra apenas por DIESEL S10
     col_prod = next(
         (c for c in df_anp_processar.columns if "PRODUTO" in c), None
     )
@@ -300,6 +301,21 @@ if not df_anp_processar.empty:
           .astype(str)
           .str.upper()
           .str.contains("DIESEL S10|DIESEL_S10", na=False)
+      ]
+
+    # 2. FILTRO DE OURO: Mantém apenas a ÚLTIMA SEMANA (Data mais recente)
+    col_data = next(
+        (
+            c
+            for c in df_anp_processar.columns
+            if "DATA" in c or "FINAL" in c or "FIM" in c
+        ),
+        None,
+    )
+    if col_data:
+      data_maxima = df_anp_processar[col_data].max()
+      df_anp_processar = df_anp_processar[
+          df_anp_processar[col_data] == data_maxima
       ]
 
     col_preco_diesel = next(
@@ -340,6 +356,7 @@ if not df_anp_processar.empty:
           col_preco_diesel
       ].apply(lambda x: x / 100.0 if x > 20.0 else x)
 
+      # Filtra linhas válidas e remove agregados nacionais
       df_diesel_valido = df_anp_processar[
           df_anp_processar[col_preco_diesel] > 1.0
       ].copy()
@@ -354,7 +371,7 @@ if not df_anp_processar.empty:
         diesel_medio_atual = df_diesel_valido[col_preco_diesel].mean()
 
         st.metric(
-            label="Preço Médio Nacional",
+            label="Preço Médio Nacional (Última Semana)",
             value=f"R$ {diesel_medio_atual:.2f} /L",
         )
 
@@ -371,7 +388,6 @@ if not df_anp_processar.empty:
             f" {df_diesel_valido.loc[idx_min, col_sigla_estado]} — R$"
             f" {df_diesel_valido.loc[idx_min, col_preco_diesel]:.2f} /L"
         )
-
 if not df_rotas.empty:
   df_rotas.columns = (
       df_rotas.columns.astype(str)
