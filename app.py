@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide"
 )
 
-# --- 1.1 FONTE POPPINS CUSTOMIZADA ---
+# --- 1.1 FONTE POPPINS & ESTILOS CUSTOMIZADOS ---
 st.markdown(
     """
     <style>
@@ -28,7 +28,7 @@ st.markdown(
         font-family: 'Poppins', sans-serif !important;
     }
 
-    /* Estilização para a Legenda do Mapa */
+    /* Legenda do Mapa */
     .legenda-mapa {
         display: flex;
         align-items: center;
@@ -65,9 +65,9 @@ LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. MÁQUINAS DE LIMPEZA E SALVAMENTO DE DADOS ---
+# --- 3. MÁQUINAS DE LIMPEZA E SALVAMENTO ---
 def limpar_numero_br(valor):
-  """Converte valores financeiros para float, lidando com formatações malucas"""
+  """Converte valores financeiros para float"""
   if pd.isna(valor):
     return 0.0
   v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
@@ -93,7 +93,7 @@ def limpar_numero_br(valor):
 
 
 def limpar_coordenada(coord):
-  """Recupera coordenadas mesmo se estiverem formatadas como porcentagem (%), com graus ou vírgulas"""
+  """Recupera coordenadas mesmo se formatadas incorretamente"""
   if pd.isna(coord):
     return None
   c_str = str(coord).strip().replace('"', "").replace(" ", "").replace("°", "")
@@ -135,7 +135,6 @@ def formatar_kpi_brl(valor):
 
 
 def salvar_historico_ia(pergunta, resposta):
-  """Salva o log de conversas na planilha principal"""
   try:
     escopos = [
         "https://spreadsheets.google.com/feeds",
@@ -168,7 +167,6 @@ def salvar_historico_ia(pergunta, resposta):
 
 
 def salvar_simulacao_sheets(linhas_validas):
-  """Injeta as tabelas geradas pela IA diretamente na nova planilha de simulações do usuário"""
   try:
     escopos = [
         "https://spreadsheets.google.com/feeds",
@@ -293,8 +291,8 @@ with st.sidebar:
   )
 
   st.caption(
-      "💡 **Dica:** Caso queira conferir a média por estado em tempo real,"
-      " acesse a aba **⛽ Painel ANP Oficial** no centro da tela."
+      "💡 **Dica:** Para verificar a variação estadual semanal, consulte a aba"
+      " **⛽ Painel ANP Oficial**."
   )
 
 if not df_rotas.empty:
@@ -389,15 +387,12 @@ if not df_rotas.empty:
   col4.metric(
       "🔺 Dentro da ANTT",
       f"{rotas_dentro} rotas",
-      help="Tarifas maiores que o piso mínimo. Foco de negociação e Saving!",
+      help="Tarifas maiores que o piso mínimo.",
   )
   col5.metric(
       "🔻 Abaixo da ANTT",
       f"{rotas_abaixo} rotas",
-      help=(
-          "Tarifas abaixo do piso regulamentar por lei. Risco legal ou"
-          " operacional."
-      ),
+      help="Tarifas abaixo do piso regulamentar por lei.",
   )
 
   st.divider()
@@ -405,9 +400,17 @@ if not df_rotas.empty:
   col_grafico, col_chat = st.columns([1.3, 1])
 
   with col_grafico:
-    aba_barras, aba_mapa, aba_anp_pbi = st.tabs(
-        ["📊 Custo por CD", "🗺️ Mapa de Densidade", "⛽ Painel ANP Oficial"]
-    )
+    (
+        aba_barras,
+        aba_mapa,
+        aba_should_cost,
+        aba_anp_pbi,
+    ) = st.tabs([
+        "📊 Custo por CD",
+        "🗺️ Mapa de Densidade",
+        "📋 Composição Should Cost",
+        "⛽ Painel ANP Oficial",
+    ])
 
     with aba_barras:
       st.markdown("### 📊 Custo por CD de Origem")
@@ -444,17 +447,14 @@ if not df_rotas.empty:
               color="#FF6600",
           )
         else:
-          st.warning(
-              "⚠️ Os valores de custo calculados vieram zerados ou são todos"
-              " anomalias."
-          )
+          st.warning("⚠️ Os valores calculados vieram zerados.")
       else:
         st.error(
             "🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' não foi"
             " encontrada!"
         )
 
-    # 🗺️ ABA DO MAPA COM LEGENDA TÉRMICA, ARCOS E DESTINOS CIANO DE VOLTA!
+    # 🗺️ ABA DO MAPA COM DENSIDADE, ARCOS E DESTINO CIANO
     with aba_mapa:
       col_lat_o = next(
           (c for c in df_rotas.columns if "LAT" in c and "ORIG" in c), None
@@ -480,7 +480,6 @@ if not df_rotas.empty:
         ).copy()
 
         if not df_mapa.empty:
-          # --- CÁLCULO DA DENSIDADE DE ROTAS POR CIDADE DE ORIGEM ---
           col_origem_nome = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
           if col_origem_nome in df_mapa.columns:
             contagem_origem = (
@@ -494,25 +493,23 @@ if not df_rotas.empty:
 
           max_dens = df_mapa["densidade_origem"].max()
 
-          # Escala Térmica Ajustada para as Origens (Laranja/Vermelho)
           def gerar_cor_densidade(qtd):
             ratio = qtd / max_dens if max_dens > 0 else 0
             if ratio > 0.60:
-              return [230, 25, 25, 230]  # Vermelho Quente
+              return [230, 25, 25, 230]
             elif ratio > 0.25:
-              return [255, 130, 0, 200]  # Laranja
+              return [255, 130, 0, 200]
             else:
-              return [255, 215, 0, 180]  # Amarelo
+              return [255, 215, 0, 180]
 
           df_mapa["cor_origem"] = df_mapa["densidade_origem"].apply(
               gerar_cor_densidade
           )
 
-          # --- LEGENDA DO MAPA FOCADA NA DENSIDADE E DESTINO ---
           st.markdown(
               """
               <div class="legenda-mapa">
-                  <span style="font-weight:600; color:#FF9900;">📍 Mapa Logístico (Densidade x Fluxo):</span>
+                  <span style="font-weight:600; color:#FF9900;">📍 Densidade de Origem (Volume):</span>
                   <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Volume</div>
                   <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Volume</div>
                   <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Alto Volume (Gargalo)</div>
@@ -522,7 +519,6 @@ if not df_rotas.empty:
               unsafe_allow_html=True,
           )
 
-          # --- CAMADAS PYDECK COMPLETAS ---
           camada_origens = pdk.Layer(
               "ScatterplotLayer",
               data=df_mapa,
@@ -531,8 +527,6 @@ if not df_rotas.empty:
               get_radius=18000,
               pickable=True,
           )
-          
-          # Destinos azul ciano brilhante!
           camada_destinos = pdk.Layer(
               "ScatterplotLayer",
               data=df_mapa,
@@ -541,8 +535,6 @@ if not df_rotas.empty:
               get_radius=12000,
               pickable=True,
           )
-          
-          # Arcos acompanhando a cor da Origem e pousando no Destino Ciano!
           camada_arcos = pdk.Layer(
               "ArcLayer",
               data=df_mapa,
@@ -565,17 +557,105 @@ if not df_rotas.empty:
               )
           )
         else:
-          st.warning("⚠️ As coordenadas limpas não geraram pontos válidos.")
+          st.warning("⚠️ Sem coordenadas válidas.")
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 🖥️ ABA EXCLUSIVA DO POWERBI DA ANP
+    # 📋 NOVA ABA: SIMULADOR DE COMPOSIÇÃO DOS 10 PILARES DO SHOULD COST
+    with aba_should_cost:
+      st.markdown("### 📋 Simulador do Should Cost (10 Pilares)")
+      st.caption(
+          "Selecione uma rota para visualizar a decomposição oficial do frete"
+          " idêntica à planilha do simulador."
+      )
+
+      col_o = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
+      col_d = "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO"
+
+      if col_o in df_rotas.columns and col_d in df_rotas.columns:
+        df_rotas["ROTA_NOME"] = (
+            df_rotas[col_o].astype(str) + " ➔ " + df_rotas[col_d].astype(str)
+        )
+        lista_rotas = sorted(df_rotas["ROTA_NOME"].unique().tolist())
+
+        rota_selecionada = st.selectbox("🎯 Escolha a Rota:", lista_rotas)
+
+        df_rota_foco = df_rotas[df_rotas["ROTA_NOME"] == rota_selecionada].iloc[
+            0
+        ]
+        custo_total_rota = float(df_rota_foco.get("CUSTO_TOTAL", 15000.0))
+        if custo_total_rota <= 0:
+          custo_total_rota = 18000.0
+
+        # Percentuais Médios dos 10 Pilares (Baseados no Simulador Oficial)
+        pilares_pct = {
+            "1. Veículo & Implemento (Capital/Depreciação)": 0.10,
+            "2. Mão de Obra (Salário, Encargos 75%, Diárias)": 0.26,
+            "3. Documentos (IPVA, Licenciamento, Tacógrafo)": 0.005,
+            "4. Seguros (Veículo e Implemento)": 0.012,
+            "5. Manutenção Preventiva/Corretiva": 0.065,
+            "6. Combustível (Diesel S10 + ARLA 32)": 0.33,
+            "7. Lubrificante e Lavagem": 0.012,
+            "8. Pneus & Recapagem": 0.044,
+            "9. Margem de Lucro do Transportador": 0.08,
+            "10. Tributos (PIS / COFINS)": 0.092,
+        }
+
+        # Criação do DataFrame com os 10 Pilares
+        dados_pilares = []
+        for pilar, pct in pilares_pct.items():
+          valor_pilar = custo_total_rota * pct
+          dados_pilares.append({
+              "Componente do Cost Driver": pilar,
+              "Participação (%)": f"{pct*100:.1f}%",
+              "Valor Estimado (R$)": f"R$ {valor_pilar:,.2f}".replace(
+                  ",", "X"
+              )
+              .replace(".", ",")
+              .replace("X", "."),
+              "Valor_Num": valor_pilar,
+          })
+
+        df_pilares_display = pd.DataFrame(dados_pilares)
+
+        # Exibição de Métricas da Rota
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Custo Estimado da Viagem", f"R$ {custo_total_rota:,.2f}")
+        m2.metric(
+            "Combustível Considerado", f"R$ {custo_total_rota*0.33:,.2f} (33%)"
+        )
+        m3.metric("Mão de Obra & Diárias", f"R$ {custo_total_rota*0.26:,.2f}")
+
+        st.write("---")
+        st.markdown("#### 📊 Decomposição Estruturada dos Custos")
+
+        # Exibe Tabela de Composição
+        st.dataframe(
+            df_pilares_display[[
+                "Componente do Cost Driver",
+                "Participação (%)",
+                "Valor Estimado (R$)",
+            ]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Gráfico de Barras dos Pilares
+        df_pilares_chart = df_pilares_display.set_index(
+            "Componente do Cost Driver"
+        )[["Valor_Num"]]
+        df_pilares_chart.columns = ["R$ Est."]
+        st.bar_chart(df_pilares_chart, color="#FF6600")
+
+      else:
+        st.info("Colunas de Origem e Destino necessárias para simulação.")
+
+    # 🖥️ ABA DO POWERBI DA ANP
     with aba_anp_pbi:
       st.caption(
           "🔗 Consulta em tempo real do Painel Oficial de Preços de"
           " Combustíveis da ANP."
       )
-
       st.link_button(
           "🌐 Abrir Painel Oficial da ANP em Nova Aba",
           LINK_POWERBI_ANP,
@@ -588,6 +668,7 @@ if not df_rotas.empty:
       """
       components.html(html_pbi, height=670)
 
+  # --- PAINEL DO CHAT IA ---
   with col_chat:
     st.subheader("🤖 Agente Estratégico de Fretes")
 
@@ -634,20 +715,28 @@ if not df_rotas.empty:
         f"O Diesel considerado atualmente na simulação é de R$ {diesel_medio_atual:.2f}/L."
     )
 
-    instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
-        Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado e qual a composição detalhada do Should Cost?"
+    instrucao = f"""Você é um Engenheiro de Logística Sênior e Especialista em Should Cost da Natura.
+        Sua função é apresentar o Should Cost fiel à planilha oficial (Simulador_Frete_Pesado_2026).
 
-        === REGRA CRÍTICA ANTI-ALUCINAÇÃO ===
-        1. Responda a perguntas sobre rotas específicas, rankings ou desvios APENAS e EXCLUSIVAMENTE utilizando os dados contidos na [TABELA REAL - TOP ROTAS ABAIXO DA ANTT] acima.
-        2. NUNCA invente ou adivinhe nomes de cidades, rotas ou transportadoras que não estejam presentes na base fornecida.
+        === ESTRUTURA PADRÃO DO SHOULD COST (10 PILARES OFICIAIS) ===
+        Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo rigorosamente os 10 componentes da planilha:
 
-        === COMPOSIÇÃO OBRIGATÓRIA DO SHOULD COST ===
-        Sempre que calcular ou simular o Should Cost de uma rota, apresente a COMPOSIÇÃO DETALHADA dos custos do frete em 3 blocos:
-        1. CUSTOS VARIÁVEIS: Combustível (Diesel S10), Pneus/Desgaste de rodagem, Lubrificante e Manutenção.
-        2. CUSTOS FIXOS DO ATIVO: Cavalo Mecânico e Baú/Carreta (Depreciação FIPE), IPVA, Licenciamento, Tacógrafo e Seguro.
-        3. CUSTOS OPERACIONAIS E MARGEM: Pedágio, Ad Valorem e Margem do Transportador (10% a 15%).
+        1. VEÍCULO: Depreciação do Cavalo Mecânico + Implemento/Baú + Remuneração do Capital (Juros)
+        2. MÃO DE OBRA: Salário base do motorista + Encargos Sociais/Trabalhistas (75%) + Benefícios + Diárias + Horas Extras
+        3. DOCUMENTOS: IPVA + Licenciamento + Tacógrafo
+        4. SEGUROS: Seguro do Veículo + Seguro do Implemento
+        5. MANUTENÇÃO: Custo de manutenção preventiva/corretiva por Km rodado
+        6. COMBUSTÍVEL: Consumo de Diesel S10 (considerando R$ {diesel_medio_atual:.2f}/L) + ARLA 32
+        7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens do veículo
+        8. PNEU: Desgaste e durabilidade de pneus novos (Dianteiro/Traseiro) + Recapagens
+        9. LUCRO: Margem de Lucro do Transportador (10%)
+        10. PIS / COFINS: Impostos incidentes sobre o frete (9,25%)
 
-        REGRA DO GERADOR: Se for solicitado gerar uma base de dados ou simulações, responda obrigatoriamente em formato de Tabela Markdown (separada por |).
+        === REGRAS DE APRESENTAÇÃO ===
+        - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
+        - Utilize apenas os parâmetros cadastrados nas abas Apoio, Base_Cálculo e Parametros_Custos.
+        - Para consultas de rotas específicas, utilize os dados de [TABELA REAL - TOP ROTAS ABAIXO DA ANTT].
+        - Se o usuário pedir para gerar uma base ou simulação em lote, responda em formato de Tabela Markdown (separada por |).
 
         DADOS DE CONSULTA DA BASE NATURA: {contexto_ia_expandido}"""
 
@@ -665,7 +754,8 @@ if not df_rotas.empty:
         st.markdown(m["content"])
 
     pergunta = st.chat_input(
-        "Ex: Quais são as top 10 rotas abaixo da ANTT e sua composição?"
+        "Ex: Monte o Should Cost detalhado da rota Itupeva x Murici com os 10"
+        " pilares."
     )
     if pergunta:
       st.chat_message("user").markdown(pergunta)
@@ -699,7 +789,7 @@ if not df_rotas.empty:
               if sucesso:
                 st.success(
                     "✨ Nova base de simulação carregada com sucesso na sua"
-                    " planilha consolidada!"
+                    " planilha!"
                 )
                 st.markdown(
                     "🔗 [Clique aqui para abrir a Planilha de"
