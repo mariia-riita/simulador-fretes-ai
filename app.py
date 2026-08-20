@@ -1,11 +1,13 @@
+from datetime import datetime
+import io
 import json
 import time
-from datetime import datetime
 import google.generativeai as genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import pydeck as pdk
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -139,7 +141,7 @@ def salvar_historico_ia(pergunta, resposta):
         pergunta,
         resposta,
     ])
-  except Exception as e:
+  except Exception:
     pass
 
 
@@ -188,7 +190,7 @@ def salvar_simulacao_sheets(linhas_validas):
 
 
 # --- 4. CARREGAMENTO DE DADOS ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)
 def ler_base_sheets():
   escopos = [
       "https://spreadsheets.google.com/feeds",
@@ -228,6 +230,34 @@ def ler_base_sheets():
   }
 
 
+@st.cache_data(ttl=3600)
+def buscar_diesel_anp_live(df_anp_backup):
+  """Busca o arquivo de dados abertos da ANP via Python.
+
+  Se o servidor do governo falhar, usa o Google Sheets como backup.
+  """
+  url_anp = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/shpc/dsan/semanal-estados.csv"
+  headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      )
+  }
+
+  try:
+    resposta = requests.get(url_anp, headers=headers, timeout=6)
+    if resposta.status_code == 200:
+      df_live = pd.read_csv(
+          io.BytesIO(resposta.content), sep=";", encoding="iso-8859-1"
+      )
+      if not df_live.empty:
+        return df_live
+  except Exception:
+    pass
+
+  return df_anp_backup
+
+
 # --- 5. INTERFACE DO USUÁRIO ---
 st.title("🚛 Inteligência de Fretes - Natura")
 
@@ -243,23 +273,30 @@ with st.sidebar:
 try:
   dados = ler_base_sheets()
   contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
-  df_anp = pd.DataFrame(dados["anp_bruto"])
+  df_anp_backup = pd.DataFrame(dados["anp_bruto"])
 except Exception as e:
   st.error(f"Erro de conexão real com o Google Sheets: {e}")
   df_rotas = pd.DataFrame()
-  df_anp = pd.DataFrame()
+  df_anp_backup = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR ---
-if not df_anp.empty:
+# --- RADAR DO DIESEL NA SIDEBAR (100% AUTOMÁTICO EM PYTHON) ---
+df_anp_processar = buscar_diesel_anp_live(df_anp_backup)
+
+if not df_anp_processar.empty:
   with st.sidebar:
     st.write("---")
     st.header("⛽ Radar do Diesel S10")
 
-    df_anp.columns = df_anp.columns.astype(str).str.strip().str.upper()
+    df_anp_processar.columns = (
+        df_anp_processar.columns.astype(str).str.strip().str.upper()
+    )
 
-    if "PRODUTO" in df_anp.columns:
-      df_anp = df_anp[
-          df_anp["PRODUTO"]
+    col_prod = next(
+        (c for c in df_anp_processar.columns if "PRODUTO" in c), None
+    )
+    if col_prod:
+      df_anp_processar = df_anp_processar[
+          df_anp_processar[col_prod]
           .astype(str)
           .str.upper()
           .str.contains("DIESEL S10|DIESEL_S10", na=False)
@@ -268,7 +305,7 @@ if not df_anp.empty:
     col_preco_diesel = next(
         (
             c
-            for c in df_anp.columns
+            for c in df_anp_processar.columns
             if ("PRECO" in c or "PREÇO" in c) and ("MEDIO" in c or "MÉDIO" in c)
         ),
         None,
@@ -277,7 +314,7 @@ if not df_anp.empty:
       col_preco_diesel = next(
           (
               c
-              for c in df_anp.columns
+              for c in df_anp_processar.columns
               if ("DIESEL" in c or "REVENDA" in c or "PRECO" in c)
               and "POSTO" not in c
               and "QTD" not in c
@@ -289,36 +326,32 @@ if not df_anp.empty:
     col_sigla_estado = next(
         (
             c
-            for c in df_anp.columns
-            if "SIGLA" in c or "ESTADO" in c or "ESTADOS" in c
+            for c in df_anp_processar.columns
+            if "SIGLA" in c or "ESTADO" in c or "UF" in c
         ),
         None,
     )
 
     if col_preco_diesel and col_sigla_estado:
-      df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(
-          limpar_numero_br
-      )
-      df_anp[col_preco_diesel] = df_anp[col_preco_diesel].apply(
-          lambda x: x / 100.0 if x > 20.0 else x
-      )
+      df_anp_processar[col_preco_diesel] = df_anp_processar[
+          col_preco_diesel
+      ].apply(limpar_numero_br)
+      df_anp_processar[col_preco_diesel] = df_anp_processar[
+          col_preco_diesel
+      ].apply(lambda x: x / 100.0 if x > 20.0 else x)
 
-      df_diesel_valido = df_anp[df_anp[col_preco_diesel] > 1.0].copy()
+      df_diesel_valido = df_anp_processar[
+          df_anp_processar[col_preco_diesel] > 1.0
+      ].copy()
       df_diesel_valido = df_diesel_valido[
-          df_diesel_valido[col_sigla_estado].astype(str).str.upper() != "BR"
-      ]
-      df_diesel_valido = df_diesel_valido[
-          df_diesel_valido[col_sigla_estado].astype(str).str.upper()
-          != "BRASIL"
+          ~df_diesel_valido[col_sigla_estado]
+          .astype(str)
+          .str.upper()
+          .isin(["BR", "BRASIL"])
       ]
 
       if not df_diesel_valido.empty:
         diesel_medio_atual = df_diesel_valido[col_preco_diesel].mean()
-
-        st.markdown(
-            "A média atual do combustível no país é de **R$"
-            f" {diesel_medio_atual:.2f} por litro**."
-        )
 
         st.metric(
             label="Preço Médio Nacional",
@@ -338,14 +371,6 @@ if not df_anp.empty:
             f" {df_diesel_valido.loc[idx_min, col_sigla_estado]} — R$"
             f" {df_diesel_valido.loc[idx_min, col_preco_diesel]:.2f} /L"
         )
-      else:
-        st.warning(
-            "⚠️ Nenhum preço válido encontrado na coluna selecionada."
-        )
-
-    # 📊 EMBUTINDO O POWERBI OFICIAL DA ANP DIRETO NA SIDEBAR
-    with st.expander("📊 Abrir Painel Oficial ANP (PowerBI)"):
-      components.iframe(LINK_POWERBI_ANP, height=450, scrolling=True)
 
 if not df_rotas.empty:
   df_rotas.columns = (
@@ -452,10 +477,12 @@ if not df_rotas.empty:
 
   st.divider()
 
-  col_grafico, col_chat = st.columns([1.2, 1])
+  col_grafico, col_chat = st.columns([1.3, 1])
 
   with col_grafico:
-    aba_barras, aba_mapa = st.tabs(["📊 Custo por CD", "🗺️ Mapa Operacional"])
+    aba_barras, aba_mapa, aba_anp_pbi = st.tabs(
+        ["📊 Custo por CD", "🗺️ Mapa Operacional", "⛽ Painel ANP Oficial"]
+    )
 
     with aba_barras:
       st.markdown("### 📊 Custo por CD de Origem")
@@ -571,10 +598,28 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
+    # 🖥️ ABA EXCLUSIVA DO POWERBI DA ANP
+    with aba_anp_pbi:
+      st.caption(
+          "🔗 Consulta em tempo real do Painel Oficial de Preços de"
+          " Combustíveis da ANP."
+      )
+
+      st.link_button(
+          "🌐 Abrir Painel Oficial da ANP em Nova Aba",
+          LINK_POWERBI_ANP,
+          type="primary",
+      )
+      st.write("---")
+
+      html_pbi = f"""
+      <iframe title="Painel ANP" width="100%" height="650" src="{LINK_POWERBI_ANP}" frameborder="0" allowFullScreen="true" style="border:0; border-radius:10px;"></iframe>
+      """
+      components.html(html_pbi, height=670)
+
   with col_chat:
     st.subheader("🤖 Agente Estratégico de Fretes")
 
-    # 🛡️ PREPARANDO AS ROTAS REAIS PARA A MEMÓRIA DA IA (EVITA ALUCINAÇÃO)
     resumo_rotas_abaixo = ""
     if not df_rotas.empty and "STATUS" in df_rotas.columns:
       df_temp = df_rotas.copy()
@@ -620,10 +665,9 @@ if not df_rotas.empty:
     instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
         Sua missão principal é responder à pergunta de ouro: "Onde estão as minhas oportunidades de saving no frete pesado e qual a composição detalhada do Should Cost?"
 
-        === REGRA CRÍTICA ANTI-ALUCINAÇÃO (MUITO IMPORTANTE) ===
+        === REGRA CRÍTICA ANTI-ALUCINAÇÃO ===
         1. Responda a perguntas sobre rotas específicas, rankings ou desvios APENAS e EXCLUSIVAMENTE utilizando os dados contidos na [TABELA REAL - TOP ROTAS ABAIXO DA ANTT] acima.
-        2. NUNCA invente, crie ou adivinhe nomes de cidades, rotas ou transportadoras que não estejam presentes no texto fornecido.
-        3. Se for perguntado por uma rota fora da tabela, declare exatamente quais são as rotas reais presentes na base.
+        2. NUNCA invente ou adivinhe nomes de cidades, rotas ou transportadoras que não estejam presentes na base fornecida.
 
         === COMPOSIÇÃO OBRIGATÓRIA DO SHOULD COST ===
         Sempre que calcular ou simular o Should Cost de uma rota, apresente a COMPOSIÇÃO DETALHADA dos custos do frete em 3 blocos:
@@ -636,9 +680,7 @@ if not df_rotas.empty:
         DADOS DE CONSULTA DA BASE NATURA: {contexto_ia_expandido}"""
 
     if "chat" not in st.session_state:
-      configuracao_ia = {
-          "temperature": 0.2
-      }  # Temperatura reduzida para 0.2 para travar alucinações
+      configuracao_ia = {"temperature": 0.2}
       st.session_state.chat = genai.GenerativeModel(
           "gemini-3.1-flash-lite-preview",
           system_instruction=instrucao,
