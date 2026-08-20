@@ -1,5 +1,4 @@
 from datetime import datetime
-import io
 import json
 import time
 import google.generativeai as genai
@@ -7,7 +6,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import pydeck as pdk
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -203,7 +201,6 @@ def ler_base_sheets():
   cliente = gspread.authorize(credenciais)
   planilha = cliente.open_by_url(LINK_PLANILHA)
 
-  anp = planilha.worksheet("Apoio_ANP").get_all_records()
   fipe = planilha.worksheet("Apoio_FIPE").get_all_records()
   antt = planilha.worksheet("Apoio_ANTT").get_all_records()
 
@@ -221,41 +218,11 @@ def ler_base_sheets():
 
   return {
       "contexto": (
-          f"ANP (Preço Diesel): {anp}\nFIPE (Preço Veículos): {fipe}\nANTT (Piso"
-          f" Mínimo): {antt}\nParâmetros Custos Fixos & Impostos:"
-          f" {param_custos}"
+          f"FIPE (Preço Veículos): {fipe}\nANTT (Piso Mínimo): {antt}\nParâmetros"
+          f" Custos Fixos & Impostos: {param_custos}"
       ),
       "tabela": df_rotas,
-      "anp_bruto": anp,
   }
-
-
-@st.cache_data(ttl=3600)
-def buscar_diesel_anp_live(df_anp_backup):
-  """Busca o arquivo de dados abertos da ANP via Python.
-
-  Se o servidor do governo falhar, usa o Google Sheets como backup.
-  """
-  url_anp = "https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/shpc/dsan/semanal-estados.csv"
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-      )
-  }
-
-  try:
-    resposta = requests.get(url_anp, headers=headers, timeout=6)
-    if resposta.status_code == 200:
-      df_live = pd.read_csv(
-          io.BytesIO(resposta.content), sep=";", encoding="iso-8859-1"
-      )
-      if not df_live.empty:
-        return df_live
-  except Exception:
-    pass
-
-  return df_anp_backup
 
 
 # --- 5. INTERFACE DO USUÁRIO ---
@@ -273,121 +240,40 @@ with st.sidebar:
 try:
   dados = ler_base_sheets()
   contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
-  df_anp_backup = pd.DataFrame(dados["anp_bruto"])
 except Exception as e:
   st.error(f"Erro de conexão real com o Google Sheets: {e}")
   df_rotas = pd.DataFrame()
-  df_anp_backup = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR (100% ALINHADO COM A ÚLTIMA SEMANA) ---
-df_anp_processar = buscar_diesel_anp_live(df_anp_backup)
 
-if not df_anp_processar.empty:
-  with st.sidebar:
-    st.write("---")
-    st.header("⛽ Radar do Diesel S10")
+# --- RADAR DO DIESEL NA SIDEBAR (INTERATIVO + POWER BI) ---
+with st.sidebar:
+  st.write("---")
+  st.header("⛽ Radar do Diesel S10")
 
-    df_anp_processar.columns = (
-        df_anp_processar.columns.astype(str).str.strip().str.upper()
-    )
+  diesel_medio_base = 5.95
 
-    # 1. Filtra apenas por DIESEL S10
-    col_prod = next(
-        (c for c in df_anp_processar.columns if "PRODUTO" in c), None
-    )
-    if col_prod:
-      df_anp_processar = df_anp_processar[
-          df_anp_processar[col_prod]
-          .astype(str)
-          .str.upper()
-          .str.contains("DIESEL S10|DIESEL_S10", na=False)
-      ]
+  diesel_medio_atual = st.number_input(
+      "Preço Médio Nacional (R$/L):",
+      min_value=4.00,
+      max_value=12.00,
+      value=diesel_medio_base,
+      step=0.05,
+      help=(
+          "Consulte o valor exato na aba '⛽ Painel ANP Oficial' do dashboard e"
+          " ajuste aqui se necessário."
+      ),
+  )
 
-    # 2. FILTRO DE OURO: Mantém apenas a ÚLTIMA SEMANA (Data mais recente)
-    col_data = next(
-        (
-            c
-            for c in df_anp_processar.columns
-            if "DATA" in c or "FINAL" in c or "FIM" in c
-        ),
-        None,
-    )
-    if col_data:
-      data_maxima = df_anp_processar[col_data].max()
-      df_anp_processar = df_anp_processar[
-          df_anp_processar[col_data] == data_maxima
-      ]
+  st.metric(
+      label="Diesel S10 Utilizado nos Cálculos",
+      value=f"R$ {diesel_medio_atual:.2f} /L",
+  )
 
-    col_preco_diesel = next(
-        (
-            c
-            for c in df_anp_processar.columns
-            if ("PRECO" in c or "PREÇO" in c) and ("MEDIO" in c or "MÉDIO" in c)
-        ),
-        None,
-    )
-    if not col_preco_diesel:
-      col_preco_diesel = next(
-          (
-              c
-              for c in df_anp_processar.columns
-              if ("DIESEL" in c or "REVENDA" in c or "PRECO" in c)
-              and "POSTO" not in c
-              and "QTD" not in c
-              and "NUMERO" not in c
-          ),
-          None,
-      )
+  st.caption(
+      "💡 **Dica:** Caso queira conferir a média por estado em tempo real,"
+      " acesse a aba **⛽ Painel ANP Oficial** no centro da tela."
+  )
 
-    col_sigla_estado = next(
-        (
-            c
-            for c in df_anp_processar.columns
-            if "SIGLA" in c or "ESTADO" in c or "UF" in c
-        ),
-        None,
-    )
-
-    if col_preco_diesel and col_sigla_estado:
-      df_anp_processar[col_preco_diesel] = df_anp_processar[
-          col_preco_diesel
-      ].apply(limpar_numero_br)
-      df_anp_processar[col_preco_diesel] = df_anp_processar[
-          col_preco_diesel
-      ].apply(lambda x: x / 100.0 if x > 20.0 else x)
-
-      # Filtra linhas válidas e remove agregados nacionais
-      df_diesel_valido = df_anp_processar[
-          df_anp_processar[col_preco_diesel] > 1.0
-      ].copy()
-      df_diesel_valido = df_diesel_valido[
-          ~df_diesel_valido[col_sigla_estado]
-          .astype(str)
-          .str.upper()
-          .isin(["BR", "BRASIL"])
-      ]
-
-      if not df_diesel_valido.empty:
-        diesel_medio_atual = df_diesel_valido[col_preco_diesel].mean()
-
-        st.metric(
-            label="Preço Médio Nacional (Última Semana)",
-            value=f"R$ {diesel_medio_atual:.2f} /L",
-        )
-
-        idx_max = df_diesel_valido[col_preco_diesel].idxmax()
-        idx_min = df_diesel_valido[col_preco_diesel].idxmin()
-
-        st.markdown(
-            "🔺 **Mais Caro:**"
-            f" {df_diesel_valido.loc[idx_max, col_sigla_estado]} — R$"
-            f" {df_diesel_valido.loc[idx_max, col_preco_diesel]:.2f} /L"
-        )
-        st.markdown(
-            "🔻 **Mais Barato:**"
-            f" {df_diesel_valido.loc[idx_min, col_sigla_estado]} — R$"
-            f" {df_diesel_valido.loc[idx_min, col_preco_diesel]:.2f} /L"
-        )
 if not df_rotas.empty:
   df_rotas.columns = (
       df_rotas.columns.astype(str)
@@ -675,7 +561,8 @@ if not df_rotas.empty:
         f" {len(df_rotas)}\n- Rotas com frete DENTRO do Mínimo ANTT:"
         f" {rotas_dentro}\n- Rotas com frete ABAIXO do Mínimo ANTT:"
         f" {rotas_abaixo}\n\n[TABELA REAL - TOP ROTAS ABAIXO DA"
-        f" ANTT]:\n{resumo_rotas_abaixo}"
+        f" ANTT]:\n{resumo_rotas_abaixo}\n"
+        f"O Diesel considerado atualmente na simulação é de R$ {diesel_medio_atual:.2f}/L."
     )
 
     instrucao = f"""Você é um Engenheiro de Logística Sênior e Consultor Estratégico da Natura.
