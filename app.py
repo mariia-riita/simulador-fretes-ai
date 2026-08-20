@@ -27,6 +27,30 @@ st.markdown(
     h1, h2, h3, h4, h5, h6, p, label, button, .stButton>button {
         font-family: 'Poppins', sans-serif !important;
     }
+
+    /* Estilização para a Legenda do Mapa */
+    .legenda-mapa {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        background-color: #1e1e1e;
+        padding: 10px 18px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        color: white;
+        font-size: 13px;
+    }
+    .item-legenda {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .bola-legenda {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        display: inline-block;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -244,8 +268,7 @@ except Exception as e:
   st.error(f"Erro de conexão real com o Google Sheets: {e}")
   df_rotas = pd.DataFrame()
 
-
-# --- RADAR DO DIESEL NA SIDEBAR (INTERATIVO + POWER BI) ---
+# --- RADAR DO DIESEL NA SIDEBAR ---
 with st.sidebar:
   st.write("---")
   st.header("⛽ Radar do Diesel S10")
@@ -383,7 +406,7 @@ if not df_rotas.empty:
 
   with col_grafico:
     aba_barras, aba_mapa, aba_anp_pbi = st.tabs(
-        ["📊 Custo por CD", "🗺️ Mapa Operacional", "⛽ Painel ANP Oficial"]
+        ["📊 Custo por CD", "🗺️ Mapa de Densidade", "⛽ Painel ANP Oficial"]
     )
 
     with aba_barras:
@@ -431,6 +454,7 @@ if not df_rotas.empty:
             " encontrada!"
         )
 
+    # 🗺️ ABA DO MAPA COM DENSIDADE TÉRMICA & LEGENDA
     with aba_mapa:
       col_lat_o = next(
           (c for c in df_rotas.columns if "LAT" in c and "ORIG" in c), None
@@ -453,18 +477,58 @@ if not df_rotas.empty:
 
         df_mapa = df_rotas.dropna(
             subset=["lat_origem", "lon_origem", "lat_destino", "lon_destino"]
-        )
+        ).copy()
 
         if not df_mapa.empty:
-          st.caption(
-              f"✨ Sucesso! Exibindo {len(df_mapa)} rotas conectadas no mapa."
+          # --- CÁLCULO DA DENSIDADE DE ROTAS POR CIDADE DE ORIGEM ---
+          col_origem_nome = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
+          if col_origem_nome in df_mapa.columns:
+            contagem_origem = (
+                df_mapa[col_origem_nome].value_counts().to_dict()
+            )
+            df_mapa["densidade_origem"] = (
+                df_mapa[col_origem_nome].map(contagem_origem).fillna(1)
+            )
+          else:
+            df_mapa["densidade_origem"] = 1
+
+          max_dens = df_mapa["densidade_origem"].max()
+
+          # Função para gerar cores térmicas (Amarelo -> Laranja -> Vermelho Quente)
+          def gerar_cor_densidade(qtd):
+            ratio = qtd / max_dens if max_dens > 0 else 0
+            if ratio > 0.60:
+              return [230, 25, 25, 230]  # Vermelho Quente (Alta Concentração)
+            elif ratio > 0.25:
+              return [255, 130, 0, 200]  # Laranja (Média Concentração)
+            else:
+              return [255, 215, 0, 180]  # Amarelo (Baixa Concentração)
+
+          df_mapa["cor_origem"] = df_mapa["densidade_origem"].apply(
+              gerar_cor_densidade
           )
+
+          # --- HTML DA LEGENDA VISUAL ---
+          st.markdown(
+              """
+              <div class="legenda-mapa">
+                  <span style="font-weight:600; color:#FF9900;">📍 Legenda de Densidade Operacional:</span>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Fluxo</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Fluxo</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Alta Concentração (Ponto Quente)</div>
+                  <div class="item-legenda"><span class="bola-legenda" style="background:#00C8FF;"></span> Destino</div>
+              </div>
+              """,
+              unsafe_allow_html=True,
+          )
+
+          # --- CAMADAS PYDECK COM CORES DINÂMICAS ---
           camada_origens = pdk.Layer(
               "ScatterplotLayer",
               data=df_mapa,
               get_position=["lon_origem", "lat_origem"],
-              get_color=[255, 140, 0, 200],
-              get_radius=15000,
+              get_color="cor_origem",
+              get_radius=18000,
               pickable=True,
           )
           camada_destinos = pdk.Layer(
@@ -472,7 +536,7 @@ if not df_rotas.empty:
               data=df_mapa,
               get_position=["lon_destino", "lat_destino"],
               get_color=[0, 200, 255, 200],
-              get_radius=15000,
+              get_radius=12000,
               pickable=True,
           )
           camada_arcos = pdk.Layer(
@@ -480,11 +544,12 @@ if not df_rotas.empty:
               data=df_mapa,
               get_source_position=["lon_origem", "lat_origem"],
               get_target_position=["lon_destino", "lat_destino"],
-              get_source_color=[255, 140, 0, 160],
+              get_source_color="cor_origem",
               get_target_color=[0, 200, 255, 160],
               get_width=3,
               pickable=True,
           )
+
           visao = pdk.ViewState(
               latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45
           )
