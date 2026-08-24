@@ -9,7 +9,7 @@ import pydeck as pdk
 import streamlit as st
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA E ESTILOS ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA E ESTILOS CUSTOMIZADOS ---
 st.set_page_config(
     page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide"
 )
@@ -25,6 +25,8 @@ st.markdown(
     h1, h2, h3, h4, h5, h6, p, label, button, .stButton>button {
         font-family: 'Poppins', sans-serif !important;
     }
+    
+    /* Legenda do Mapa Logístico */
     .legenda-mapa {
         display: flex;
         align-items: center;
@@ -38,12 +40,22 @@ st.markdown(
     }
     .item-legenda { display: flex; align-items: center; gap: 6px; }
     .bola-legenda { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+    /* Fix para evitar corte de texto e números nos Cards de Métricas */
+    [data-testid="stMetricValue"] {
+        font-size: 20px !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 12px !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- 2. CONSTANTES E SEGURANÇA ---
+# --- 2. CONSTANTES E CONEXÕES ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
 LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
@@ -52,7 +64,7 @@ LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
+# --- 3. MÁQUINAS DE LIMPEZA E TRATAMENTO DE DADOS ---
 def limpar_numero_br(valor):
   if pd.isna(valor):
     return 0.0
@@ -195,7 +207,7 @@ def salvar_simulacao_sheets(linhas_validas):
 
 
 def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
-  """Reescreve os parâmetros e atualiza a aba Base_Cálculo automaticamente na nuvem."""
+  """Grava o Diesel e os resultados calculados de volta no Google Sheets."""
   try:
     escopos = [
         "https://spreadsheets.google.com/feeds",
@@ -229,7 +241,7 @@ def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
     return False
 
 
-# --- 4. CARREGAMENTO EM TEMPO REAL ---
+# --- 4. CARREGAMENTO EM TEMPO REAL DAS ABAS DO GOOGLE SHEETS ---
 @st.cache_data(ttl=300)
 def ler_base_sheets():
   escopos = [
@@ -595,7 +607,7 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO + CÁLCULO DE VIAGENS POR MÊS
+    # 📋 ABA: SHOULD COST DINÂMICO
     with aba_should_cost:
       st.markdown(
           "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
@@ -632,10 +644,10 @@ if not df_rotas.empty:
         if km_rota <= 0:
           km_rota = 1000.0
 
-        # CÁLCULO DO TEMPO E VIAGENS/MÊS (FÓRMULA ALEX)
-        velocidade_media = 65.0  # km/h para Carreta
-        tempo_carga = 12.0  # horas
-        tempo_descarga = 24.0  # horas
+        # CÁLCULO DO TEMPO E VIAGENS/MÊS
+        velocidade_media = 65.0
+        tempo_carga = 12.0
+        tempo_descarga = 24.0
         dias_trabalho_mes = 24.0
         jornada_diaria_horas = 10.0
 
@@ -643,12 +655,9 @@ if not df_rotas.empty:
         tempo_operacao_total = (
             tempo_percurso_horas + tempo_carga + tempo_descarga
         )
-
-        viagens_dia = (jornada_diaria_horas) / (
-            tempo_operacao_total / 24.0 if tempo_operacao_total > 0 else 1.0
-        )
         viagens_mes = max(
-            1.0, (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total
+            1.0,
+            (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total,
         )
 
         # CÁLCULO DINÂMICO DOS CUSTOS POR VIAGEM
@@ -748,17 +757,24 @@ if not df_rotas.empty:
             .replace("X", ".")
         )
 
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Distância Ida e Volta", f"{km_rota*2:,.0f} km".replace(",", "."))
-        m2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
-        m3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
-        m4.metric(
+        # KPIs DA ROTA ORGANIZADOS EM 2 LINHAS (SEM CORTAR TEXTO OU VALOR)
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Distância Ida e Volta", f"{km_rota*2:,.0f} km".replace(",", ".")
+        )
+        c2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
+        c3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
+
+        st.write("")
+
+        c4, c5 = st.columns(2)
+        c4.metric(
             "Custo por Viagem",
             f"R$ {total_should_cost_calc:,.2f}".replace(",", "X")
             .replace(".", ",")
             .replace("X", "."),
         )
-        m5.metric(
+        c5.metric(
             "Custo Total Mês Rota",
             f"R$ {total_should_cost_calc*viagens_mes:,.2f}".replace(",", "X")
             .replace(".", ",")
