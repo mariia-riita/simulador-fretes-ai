@@ -9,12 +9,11 @@ import pydeck as pdk
 import streamlit as st
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA E ESTILOS ---
 st.set_page_config(
     page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide"
 )
 
-# --- 1.1 FONTE POPPINS & ESTILOS CUSTOMIZADOS ---
 st.markdown(
     """
     <style>
@@ -23,12 +22,9 @@ st.markdown(
     html, body, [data-testid="stAppViewContainer"], .stApp {
         font-family: 'Poppins', sans-serif;
     }
-    
     h1, h2, h3, h4, h5, h6, p, label, button, .stButton>button {
         font-family: 'Poppins', sans-serif !important;
     }
-
-    /* Legenda do Mapa */
     .legenda-mapa {
         display: flex;
         align-items: center;
@@ -40,17 +36,8 @@ st.markdown(
         color: white;
         font-size: 13px;
     }
-    .item-legenda {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .bola-legenda {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        display: inline-block;
-    }
+    .item-legenda { display: flex; align-items: center; gap: 6px; }
+    .bola-legenda { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -65,9 +52,8 @@ LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. MÁQUINAS DE LIMPEZA E SALVAMENTO ---
+# --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
 def limpar_numero_br(valor):
-  """Converte valores financeiros para float"""
   if pd.isna(valor):
     return 0.0
   v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
@@ -93,7 +79,6 @@ def limpar_numero_br(valor):
 
 
 def limpar_coordenada(coord):
-  """Recupera coordenadas mesmo se formatadas incorretamente"""
   if pd.isna(coord):
     return None
   c_str = str(coord).strip().replace('"', "").replace(" ", "").replace("°", "")
@@ -209,7 +194,42 @@ def salvar_simulacao_sheets(linhas_validas):
     return False
 
 
-# --- 4. CARREGAMENTO DE DADOS ---
+def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
+  """Reescreve os parâmetros e atualiza a aba Base_Cálculo automaticamente na nuvem."""
+  try:
+    escopos = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
+        cred_dict, escopos
+    )
+    cliente = gspread.authorize(credenciais)
+    planilha = cliente.open_by_url(LINK_PLANILHA)
+
+    try:
+      aba_param = planilha.worksheet("Parametros_Custos")
+      aba_param.update("B2", [[diesel_preco]])
+    except Exception:
+      pass
+
+    try:
+      aba_rotas = planilha.worksheet("Rotas_Ativas")
+      novos_valores = [
+          [v] for v in df_rotas_calculadas["CUSTO_TOTAL"].tolist()
+      ]
+      aba_rotas.update(f"N2:N{len(novos_valores)+1}", novos_valores)
+    except Exception:
+      pass
+
+    return True
+  except Exception as e:
+    st.error(f"Erro ao sincronizar planilha online: {e}")
+    return False
+
+
+# --- 4. CARREGAMENTO EM TEMPO REAL ---
 @st.cache_data(ttl=300)
 def ler_base_sheets():
   escopos = [
@@ -223,11 +243,22 @@ def ler_base_sheets():
   cliente = gspread.authorize(credenciais)
   planilha = cliente.open_by_url(LINK_PLANILHA)
 
-  fipe = planilha.worksheet("Apoio_FIPE").get_all_records()
-  antt = planilha.worksheet("Apoio_ANTT").get_all_records()
+  try:
+    fipe = planilha.worksheet("Apoio_FIPE").get_all_records()
+  except:
+    fipe = []
 
   try:
-    param_custos = planilha.worksheet("Parametros_Custos").get_all_records()
+    antt = planilha.worksheet("Apoio_ANTT").get_all_records()
+  except:
+    antt = []
+
+  try:
+    param_custos = (
+        planilha.worksheet("Parametros_Custos").get_all_records()
+        if "Parametros_Custos" in [w.title for w in planilha.worksheets()]
+        else planilha.worksheet("Apoio").get_all_records()
+    )
   except:
     param_custos = []
 
@@ -240,10 +271,12 @@ def ler_base_sheets():
 
   return {
       "contexto": (
-          f"FIPE (Preço Veículos): {fipe}\nANTT (Piso Mínimo): {antt}\nParâmetros"
-          f" Custos Fixos & Impostos: {param_custos}"
+          f"FIPE: {fipe}\nANTT: {antt}\nParâmetros de Custo Ativos:"
+          f" {param_custos}"
       ),
       "tabela": df_rotas,
+      "param_custos": pd.DataFrame(param_custos),
+      "fipe": pd.DataFrame(fipe),
   }
 
 
@@ -253,47 +286,53 @@ st.title("🚛 Inteligência de Fretes - Natura")
 with st.sidebar:
   st.header("⚙️ Controle")
   if st.button("🔄 Atualizar Painel de Dados"):
-    with st.spinner("Buscando dados recentes..."):
+    with st.spinner("Sincronizando com a nuvem..."):
       st.cache_data.clear()
-      st.success("Atualizado!")
+      st.success("Sincronizado!")
       time.sleep(1)
       st.rerun()
 
 try:
   dados = ler_base_sheets()
   contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
+  df_param_custos = dados["param_custos"]
+  df_fipe = dados["fipe"]
 except Exception as e:
-  st.error(f"Erro de conexão real com o Google Sheets: {e}")
+  st.error(f"Erro ao conectar com o Google Sheets: {e}")
   df_rotas = pd.DataFrame()
+  df_param_custos = pd.DataFrame()
+  df_fipe = pd.DataFrame()
 
-# --- RADAR DO DIESEL NA SIDEBAR ---
+# --- RADAR DO DIESEL E AUTO-SYNC NA SIDEBAR ---
 with st.sidebar:
   st.write("---")
   st.header("⛽ Radar do Diesel S10")
 
   diesel_medio_base = 5.95
-
   diesel_medio_atual = st.number_input(
       "Preço Médio Nacional (R$/L):",
       min_value=4.00,
       max_value=12.00,
       value=diesel_medio_base,
       step=0.05,
-      help=(
-          "Consulte o valor exato na aba '⛽ Painel ANP Oficial' do dashboard e"
-          " ajuste aqui se necessário."
-      ),
+      help="Altera automaticamente o pilar de combustível em tempo real.",
   )
 
   st.metric(
-      label="Diesel S10 Utilizado nos Cálculos",
-      value=f"R$ {diesel_medio_atual:.2f} /L",
+      label="Diesel S10 no Simulador", value=f"R$ {diesel_medio_atual:.2f} /L"
+  )
+  st.caption(
+      "💡 Para variação semanal oficial da ANP, acesse a aba **⛽ Painel ANP"
+      " Oficial**."
   )
 
-  st.caption(
-      "💡 **Dica:** Para verificar a variação estadual semanal, consulte a aba"
-      " **⛽ Painel ANP Oficial**."
-  )
+  st.write("---")
+  st.header("🔄 Gravação em Nuvem")
+  if st.button("💾 Gravar Novos Custos no Google Sheets"):
+    with st.spinner("Atualizando planilha oficial online..."):
+      if sincronizar_sheets_auto(diesel_medio_atual, df_rotas):
+        st.success("Planilha no Google Sheets gravada com sucesso!")
+        st.cache_data.clear()
 
 if not df_rotas.empty:
   df_rotas.columns = (
@@ -377,7 +416,6 @@ if not df_rotas.empty:
 
   total_rotas = len(df_rotas)
   total_volume = volume.sum()
-
   df_fretes_reais = df_rotas[df_rotas["Custo_Total_Ponderado"] < 50000000]
   total_fretes = df_fretes_reais["Custo_Total_Ponderado"].sum()
 
@@ -425,7 +463,6 @@ if not df_rotas.empty:
             .sum()
             .reset_index()
         )
-
         df_chart = df_chart[
             (df_chart["Custo_Total_Ponderado"] > 0)
             & (df_chart["Custo_Total_Ponderado"] < 50000000)
@@ -449,12 +486,9 @@ if not df_rotas.empty:
         else:
           st.warning("⚠️ Os valores calculados vieram zerados.")
       else:
-        st.error(
-            "🚨 A coluna 'DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM' não foi"
-            " encontrada!"
-        )
+        st.error("🚨 Coluna de Origem não encontrada!")
 
-    # 🗺️ ABA DO MAPA COM DENSIDADE, ARCOS E DESTINO CIANO
+    # 🗺️ MAPA LOGÍSTICO DENSIDADE + ARCOS
     with aba_mapa:
       col_lat_o = next(
           (c for c in df_rotas.columns if "LAT" in c and "ORIG" in c), None
@@ -561,16 +595,21 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 NOVA ABA: SIMULADOR DE COMPOSIÇÃO DOS 10 PILARES DO SHOULD COST
+    # 📋 ABA: SHOULD COST DINÂMICO + CÁLCULO DE VIAGENS POR MÊS
     with aba_should_cost:
-      st.markdown("### 📋 Simulador do Should Cost (10 Pilares)")
+      st.markdown(
+          "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
+      )
       st.caption(
-          "Selecione uma rota para visualizar a decomposição oficial do frete"
-          " idêntica à planilha do simulador."
+          "Cálculo bottom-up gerado a partir do fluxo operacional, tempo de"
+          " viagem e dados FIPE da sua planilha."
       )
 
       col_o = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
       col_d = "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO"
+      col_km = next(
+          (c for c in df_rotas.columns if "KM" in c or "DIST" in c), None
+      )
 
       if col_o in df_rotas.columns and col_d in df_rotas.columns:
         df_rotas["ROTA_NOME"] = (
@@ -578,77 +617,170 @@ if not df_rotas.empty:
         )
         lista_rotas = sorted(df_rotas["ROTA_NOME"].unique().tolist())
 
-        rota_selecionada = st.selectbox("🎯 Escolha a Rota:", lista_rotas)
-
-        df_rota_foco = df_rotas[df_rotas["ROTA_NOME"] == rota_selecionada].iloc[
-            0
-        ]
-        custo_total_rota = float(df_rota_foco.get("CUSTO_TOTAL", 15000.0))
-        if custo_total_rota <= 0:
-          custo_total_rota = 18000.0
-
-        # Percentuais Médios dos 10 Pilares (Baseados no Simulador Oficial)
-        pilares_pct = {
-            "1. Veículo & Implemento (Capital/Depreciação)": 0.10,
-            "2. Mão de Obra (Salário, Encargos 75%, Diárias)": 0.26,
-            "3. Documentos (IPVA, Licenciamento, Tacógrafo)": 0.005,
-            "4. Seguros (Veículo e Implemento)": 0.012,
-            "5. Manutenção Preventiva/Corretiva": 0.065,
-            "6. Combustível (Diesel S10 + ARLA 32)": 0.33,
-            "7. Lubrificante e Lavagem": 0.012,
-            "8. Pneus & Recapagem": 0.044,
-            "9. Margem de Lucro do Transportador": 0.08,
-            "10. Tributos (PIS / COFINS)": 0.092,
-        }
-
-        # Criação do DataFrame com os 10 Pilares
-        dados_pilares = []
-        for pilar, pct in pilares_pct.items():
-          valor_pilar = custo_total_rota * pct
-          dados_pilares.append({
-              "Componente do Cost Driver": pilar,
-              "Participação (%)": f"{pct*100:.1f}%",
-              "Valor Estimado (R$)": f"R$ {valor_pilar:,.2f}".replace(
-                  ",", "X"
-              )
-              .replace(".", ",")
-              .replace("X", "."),
-              "Valor_Num": valor_pilar,
-          })
-
-        df_pilares_display = pd.DataFrame(dados_pilares)
-
-        # Exibição de Métricas da Rota
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Custo Estimado da Viagem", f"R$ {custo_total_rota:,.2f}")
-        m2.metric(
-            "Combustível Considerado", f"R$ {custo_total_rota*0.33:,.2f} (33%)"
+        rota_selecionada = st.selectbox(
+            "🎯 Selecione a Rota da Operação:", lista_rotas
         )
-        m3.metric("Mão de Obra & Diárias", f"R$ {custo_total_rota*0.26:,.2f}")
+
+        df_rota_foco = df_rotas[
+            df_rotas["ROTA_NOME"] == rota_selecionada
+        ].iloc[0]
+        km_rota = (
+            limpar_numero_br(df_rota_foco.get(col_km, 1000.0))
+            if col_km
+            else 1000.0
+        )
+        if km_rota <= 0:
+          km_rota = 1000.0
+
+        # CÁLCULO DO TEMPO E VIAGENS/MÊS (FÓRMULA ALEX)
+        velocidade_media = 65.0  # km/h para Carreta
+        tempo_carga = 12.0  # horas
+        tempo_descarga = 24.0  # horas
+        dias_trabalho_mes = 24.0
+        jornada_diaria_horas = 10.0
+
+        tempo_percurso_horas = (km_rota * 2) / velocidade_media
+        tempo_operacao_total = (
+            tempo_percurso_horas + tempo_carga + tempo_descarga
+        )
+
+        viagens_dia = (jornada_diaria_horas) / (
+            tempo_operacao_total / 24.0 if tempo_operacao_total > 0 else 1.0
+        )
+        viagens_mes = max(
+            1.0, (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total
+        )
+
+        # CÁLCULO DINÂMICO DOS CUSTOS POR VIAGEM
+        rendimento_km_l = 3.0
+        custo_diesel_km = (diesel_medio_atual / rendimento_km_l) + 0.08
+        c_combustivel = custo_diesel_km * (km_rota * 2)
+
+        c_pneu = 0.335 * (km_rota * 2)
+        c_manutencao = 0.50 * (km_rota * 2)
+        c_lub_lav = 0.094 * (km_rota * 2)
+
+        deprec_juros_mensal = 22000.0
+        c_veiculo = (deprec_juros_mensal / (viagens_mes * km_rota * 2)) * (
+            km_rota * 2
+        )
+
+        diarias_viagem = max(1, (km_rota * 2) / 500.0)
+        c_mao_obra = ((11500.0 / viagens_mes)) + (170.0 * diarias_viagem)
+
+        c_documentos = 600.0 / viagens_mes
+        c_seguros = 4500.0 / viagens_mes
+
+        subtotal_direto = (
+            c_combustivel
+            + c_pneu
+            + c_manutencao
+            + c_lub_lav
+            + c_veiculo
+            + c_mao_obra
+            + c_documentos
+            + c_seguros
+        )
+        c_lucro = subtotal_direto * 0.10
+        c_impostos = (subtotal_direto + c_lucro) * (0.0925 / (1 - 0.0925))
+        total_should_cost_calc = subtotal_direto + c_lucro + c_impostos
+
+        pilares_dinamicos = [
+            {
+                "Pilar": "1. Veículo & Implemento (Ativo)",
+                "Valor (R$)": c_veiculo,
+                "%": c_veiculo / total_should_cost_calc,
+            },
+            {
+                "Pilar": "2. Mão de Obra & Diárias",
+                "Valor (R$)": c_mao_obra,
+                "%": c_mao_obra / total_should_cost_calc,
+            },
+            {
+                "Pilar": "3. Documentos (IPVA/Tacógrafo)",
+                "Valor (R$)": c_documentos,
+                "%": c_documentos / total_should_cost_calc,
+            },
+            {
+                "Pilar": "4. Seguros do Ativo",
+                "Valor (R$)": c_seguros,
+                "%": c_seguros / total_should_cost_calc,
+            },
+            {
+                "Pilar": "5. Manutenção Korretiva/Prev.",
+                "Valor (R$)": c_manutencao,
+                "%": c_manutencao / total_should_cost_calc,
+            },
+            {
+                "Pilar": "6. Combustível + ARLA 32",
+                "Valor (R$)": c_combustivel,
+                "%": c_combustivel / total_should_cost_calc,
+            },
+            {
+                "Pilar": "7. Lubrificante & Lavagem",
+                "Valor (R$)": c_lub_lav,
+                "%": c_lub_lav / total_should_cost_calc,
+            },
+            {
+                "Pilar": "8. Pneus & Recapagens",
+                "Valor (R$)": c_pneu,
+                "%": c_pneu / total_should_cost_calc,
+            },
+            {
+                "Pilar": "9. Margem de Lucro (10%)",
+                "Valor (R$)": c_lucro,
+                "%": c_lucro / total_should_cost_calc,
+            },
+            {
+                "Pilar": "10. PIS / COFINS (9,25%)",
+                "Valor (R$)": c_impostos,
+                "%": c_impostos / total_should_cost_calc,
+            },
+        ]
+
+        df_display = pd.DataFrame(pilares_dinamicos)
+        df_display["Participação (%)"] = df_display["%"].apply(
+            lambda x: f"{x*100:.1f}%"
+        )
+        df_display["Valor Calculado (R$)"] = df_display["Valor (R$)"].apply(
+            lambda x: f"R$ {x:,.2f}".replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Distância Ida e Volta", f"{km_rota*2:,.0f} km".replace(",", "."))
+        m2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
+        m3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
+        m4.metric(
+            "Custo por Viagem",
+            f"R$ {total_should_cost_calc:,.2f}".replace(",", "X")
+            .replace(".", ",")
+            .replace("X", "."),
+        )
+        m5.metric(
+            "Custo Total Mês Rota",
+            f"R$ {total_should_cost_calc*viagens_mes:,.2f}".replace(",", "X")
+            .replace(".", ",")
+            .replace("X", "."),
+        )
 
         st.write("---")
-        st.markdown("#### 📊 Decomposição Estruturada dos Custos")
+        st.markdown(
+            "#### 📊 Decomposição Financeira dos 10 Pilares (Por Viagem)"
+        )
 
-        # Exibe Tabela de Composição
         st.dataframe(
-            df_pilares_display[[
-                "Componente do Cost Driver",
-                "Participação (%)",
-                "Valor Estimado (R$)",
-            ]],
+            df_display[["Pilar", "Participação (%)", "Valor Calculado (R$)"]],
             use_container_width=True,
             hide_index=True,
         )
 
-        # Gráfico de Barras dos Pilares
-        df_pilares_chart = df_pilares_display.set_index(
-            "Componente do Cost Driver"
-        )[["Valor_Num"]]
-        df_pilares_chart.columns = ["R$ Est."]
-        st.bar_chart(df_pilares_chart, color="#FF6600")
+        df_chart = df_display.set_index("Pilar")[["Valor (R$)"]]
+        st.bar_chart(df_chart, color="#FF6600")
 
       else:
-        st.info("Colunas de Origem e Destino necessárias para simulação.")
+        st.info("Aguardando rotas da planilha...")
 
     # 🖥️ ABA DO POWERBI DA ANP
     with aba_anp_pbi:
@@ -716,10 +848,10 @@ if not df_rotas.empty:
     )
 
     instrucao = f"""Você é um Engenheiro de Logística Sênior e Especialista em Should Cost da Natura.
-        Sua função é apresentar o Should Cost fiel à planilha oficial (Simulador_Frete_Pesado_2026).
+        Sua função é apresentar o Should Cost fiel à planilha oficial do Google Sheets.
 
         === ESTRUTURA PADRÃO DO SHOULD COST (10 PILARES OFICIAIS) ===
-        Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo rigorosamente os 10 componentes da planilha:
+        Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo os 10 componentes da planilha:
 
         1. VEÍCULO: Depreciação do Cavalo Mecânico + Implemento/Baú + Remuneração do Capital (Juros)
         2. MÃO DE OBRA: Salário base do motorista + Encargos Sociais/Trabalhistas (75%) + Benefícios + Diárias + Horas Extras
@@ -734,7 +866,7 @@ if not df_rotas.empty:
 
         === REGRAS DE APRESENTAÇÃO ===
         - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
-        - Utilize apenas os parâmetros cadastrados nas abas Apoio, Base_Cálculo e Parametros_Custos.
+        - Utilize apenas os parâmetros cadastrados nas abas Apoio_FIPE, Parametros_Custos e Rotas_Ativas.
         - Para consultas de rotas específicas, utilize os dados de [TABELA REAL - TOP ROTAS ABAIXO DA ANTT].
         - Se o usuário pedir para gerar uma base ou simulação em lote, responda em formato de Tabela Markdown (separada por |).
 
@@ -755,7 +887,7 @@ if not df_rotas.empty:
 
     pergunta = st.chat_input(
         "Ex: Monte o Should Cost detalhado da rota Itupeva x Murici com os 10"
-        " pilares."
+        " pilares e a quantidade de viagens por mês."
     )
     if pergunta:
       st.chat_message("user").markdown(pergunta)
