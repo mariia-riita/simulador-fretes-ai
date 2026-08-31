@@ -5,8 +5,8 @@ import pandas as pd
 df = pd.read_excel('dados_frete.xlsx')
 
 # 2. Padronização dos textos (remove espaços e garante maiúsculas)
-df['UF_ORIGEM'] = df['UF_ORIGEM'].astype(str).str.strip().str.upper()
-df['UF_DESTINO'] = df['UF_DESTINO'].astype(str).str.strip().str.upper()
+df['UF - Origem] = df['UF - Origem'].astype(str).str.strip().str.upper()
+df['UF - Destino'] = df['UF - Destino'].astype(str).str.strip().str.upper()
 
 # 3. Tratamento dos valores (converte strings formatadas para float para evitar erro no cálculo)
 df['VALOR_FRETE_PRATICADO'] = pd.to_numeric(
@@ -44,7 +44,7 @@ df['STATUS_FRETE'] = np.select(
 
 # 5. Agrupamento por rota
 resumo_rotas = (
-    df.groupby(['UF_ORIGEM', 'UF_DESTINO'])
+    df.groupby(['UF - Origem', 'UF - Destino'])
     .agg(
         total_rotas=('STATUS_FRETE', 'count'),
         rotas_abaixo=(
