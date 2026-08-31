@@ -67,10 +67,10 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 # --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
 def encontrar_coluna(df, palavras_chave, excluir=[]):
   """Encontra colunas no DataFrame de forma dinâmica ignorando variações de nome."""
-  if df is None or df.empty:
+  if df is None or len(df.columns) == 0:
     return None
   for col in df.columns:
-    col_str = str(col).upper().strip()
+    col_str = str(col).upper().strip().replace("\n", " ").replace("\r", " ")
     if any(kw.upper() in col_str for kw in palavras_chave) and not any(
         ex.upper() in col_str for ex in excluir
     ):
@@ -79,38 +79,87 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
 
 
 def formatar_rotas_codigo_nome(df_rotas):
-  """Cria o nome de exibição no formato [CÓDIGO - NOME ➔ CÓDIGO - NOME] para permitir busca dupla."""
+  """Cria o nome de exibição no formato [CÓDIGO - NOME ➔ CÓDIGO - NOME] para busca dupla."""
+  if df_rotas is None or df_rotas.empty:
+    return df_rotas, None, None
+
+  # Busca colunas de Código
   col_cod_o = encontrar_coluna(
       df_rotas,
       [
           "CODIGO_ZONA_DE_TRANSPORTE_ORIGEM",
-          "COD_ORIGEM",
           "CODIGO_ORIGEM",
+          "COD_ORIGEM",
+          "CD_ORIGEM",
           "COD_O",
-          "CODIGO_ZONA_ORIGEM",
+          "CODIGO_O",
+          "ZONA_ORIGEM_COD",
+          "ORIGEM_COD",
+          "CODIGO ZONA",
+          "COD ORIGEM",
+          "CODIGO",
+          "COD",
       ],
+      excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
   )
   col_cod_d = encontrar_coluna(
       df_rotas,
       [
           "CODIGO_ZONA_DE_TRANSPORTE_DESTINO",
-          "COD_DESTINO",
           "CODIGO_DESTINO",
+          "COD_DESTINO",
+          "CD_DESTINO",
           "COD_D",
-          "CODIGO_ZONA_DESTINO",
+          "CODIGO_D",
+          "ZONA_DESTINO_COD",
+          "DESTINO_COD",
+          "COD DESTINO",
+          "CODIGO",
+          "COD",
       ],
+      excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
   )
 
+  # Busca colunas de Nome / Descrição
   col_o = encontrar_coluna(
       df_rotas,
-      ["DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM", "ORIGEM", "NOME_ORIGEM", "ORIG"],
-      excluir=["COD", "CODIGO"],
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "DESCRICAO_ORIGEM",
+          "DESC_ORIGEM",
+          "NOME_ORIGEM",
+          "DESCRICAO_ZONA_ORIGEM",
+          "DESC_ZONA_ORIGEM",
+          "ORIGEM",
+          "NOME_O",
+          "ORIG",
+      ],
+      excluir=["DESTINO", "DEST", "CODIGO", "COD", "CD"],
   )
   col_d = encontrar_coluna(
       df_rotas,
-      ["DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO", "DESTINO", "NOME_DESTINO", "DEST"],
-      excluir=["COD", "CODIGO"],
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
+          "DESCRICAO_DESTINO",
+          "DESC_DESTINO",
+          "NOME_DESTINO",
+          "DESCRICAO_ZONA_DESTINO",
+          "DESC_ZONA_DESTINO",
+          "DESTINO",
+          "NOME_D",
+          "DEST",
+      ],
+      excluir=["ORIGEM", "ORIG", "CODIGO", "COD", "CD"],
   )
+
+  if not col_o:
+    col_o = encontrar_coluna(
+        df_rotas, ["ORIGEM", "ORIG"], excluir=["DESTINO", "DEST"]
+    )
+  if not col_d:
+    col_d = encontrar_coluna(
+        df_rotas, ["DESTINO", "DEST"], excluir=["ORIGEM", "ORIG"]
+    )
 
   if (
       col_cod_o
@@ -121,13 +170,26 @@ def formatar_rotas_codigo_nome(df_rotas):
       and col_cod_d != col_d
   ):
     df_rotas["ROTA_NOME"] = (
-        df_rotas[col_cod_o].astype(str).str.strip()
+        df_rotas[col_cod_o]
+        .astype(str)
+        .str.strip()
+        .replace("nan", "")
+        .replace("None", "")
         + " - "
         + df_rotas[col_o].astype(str).str.strip()
         + " ➔ "
-        + df_rotas[col_cod_d].astype(str).str.strip()
+        + df_rotas[col_cod_d]
+        .astype(str)
+        .str.strip()
+        .replace("nan", "")
+        .replace("None", "")
         + " - "
         + df_rotas[col_d].astype(str).str.strip()
+    )
+    df_rotas["ROTA_NOME"] = (
+        df_rotas["ROTA_NOME"]
+        .str.replace("^ - ", "", regex=True)
+        .str.replace(" ➔  - ", " ➔ ", regex=False)
     )
   elif col_o and col_d:
     df_rotas["ROTA_NOME"] = (
@@ -430,6 +492,9 @@ if not df_rotas.empty:
       .str.upper()
   )
 
+  # Formatação global de rotas com Código + Nome
+  df_rotas, col_o_global, col_d_global = formatar_rotas_codigo_nome(df_rotas)
+
   # Localização dinâmica de colunas principais
   col_base = encontrar_coluna(df_rotas, ["CUSTO", "BASE"])
   col_contrato = encontrar_coluna(df_rotas, ["CONTRATO"])
@@ -536,7 +601,7 @@ if not df_rotas.empty:
 
     with aba_barras:
       st.markdown("### 📊 Custo por CD de Origem")
-      col_origem = encontrar_coluna(
+      col_origem = col_o_global or encontrar_coluna(
           df_rotas, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
       )
 
@@ -592,7 +657,7 @@ if not df_rotas.empty:
         ).copy()
 
         if not df_mapa.empty:
-          col_origem_nome = encontrar_coluna(
+          col_origem_nome = col_o_global or encontrar_coluna(
               df_mapa, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
           )
           if col_origem_nome:
@@ -683,9 +748,6 @@ if not df_rotas.empty:
       st.caption(
           "Pesquise a rota digitando o **código** ou o **nome da cidade**."
       )
-
-      # Aplica a formatação [CÓDIGO - NOME ➔ CÓDIGO - NOME] para permitir busca dupla
-      df_rotas, col_o, col_d = formatar_rotas_codigo_nome(df_rotas)
 
       col_km = encontrar_coluna(
           df_rotas,
@@ -984,7 +1046,7 @@ if not df_rotas.empty:
         7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens do veículo
         8. PNEU: Desgaste e durabilidade de pneus novos (Dianteiro/Traseiro) + Recapagens
         9. LUCRO: Margem de Lucro do Transportador (10%)
-        10. PIS / COFINS: Impostos incidentes sobre o frete (9,25%)
+        10. PIS / COFINS: Impostos incidentes sobre el frete (9,25%)
 
         === REGRAS DE APRESENTAÇÃO ===
         - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
