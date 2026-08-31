@@ -67,20 +67,33 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 
 # --- 3. HELPER FUNCTIONS DE TRATAMENTO NUMÉRICO E BUSCA ---
 def encontrar_coluna(df, palavras_chave, excluir=[]):
+  """Encontra a primeira coluna no DataFrame priorizando a ordem das palavras-chave."""
   if df is None or len(df.columns) == 0:
     return None
   excluir_limpo = [x.upper() for x in excluir if x]
-  for col in df.columns:
-    col_clean = str(col).upper().strip().replace("\n", " ").replace("\r", " ")
-    if any(kw.upper() in col_clean for kw in palavras_chave) and not any(
-        ex in col_clean for ex in excluir_limpo
-    ):
-      return col
+  for kw in palavras_chave:
+    kw_upper = kw.upper()
+    for col in df.columns:
+      col_clean = str(col).upper().strip().replace("\n", " ").replace("\r", " ")
+      if kw_upper in col_clean and not any(
+          ex in col_clean for ex in excluir_limpo
+      ):
+        return col
   return None
 
 
+def extrair_series(df, col_name):
+  """Extrai com segurança uma pandas Series limpa, tratando colunas duplicadas no DataFrame."""
+  if not col_name or df is None or col_name not in df.columns:
+    return pd.Series("", index=df.index if df is not None else [0])
+  val = df[col_name]
+  if isinstance(val, pd.DataFrame):
+    val = val.iloc[:, 0]
+  return val.fillna("").astype(str).str.strip()
+
+
 def limpar_numero_br_correto(valor):
-  """Converte formatos de moeda e milhar brasileiros (ex: '2.312,955' -> 2312.955) sem truncar números."""
+  """Converte formatos numéricos BR (ex: '2.312,955' -> 2312.955) sem truncar milhares."""
   if pd.isna(valor):
     return 0.0
   v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
@@ -113,7 +126,7 @@ def limpar_numero_br_correto(valor):
 
 
 def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
-  """Aplica o PROCX do De_Para_KMs do Google Maps sobre as Rotas Ativas."""
+  """Aplica o PROCX do De_Para_KMs do Google Maps sobre as Rotas Ativas de forma 100% segura."""
   if df_rotas_in is None or df_rotas_in.empty:
     return df_rotas_in, None, None
 
@@ -127,6 +140,7 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
           "CODIGO_ORIGEM",
           "COD_ORIGEM",
       ],
+      excluir=["DESCRICAO", "DESC", "NOME"],
   )
   col_cod_d = encontrar_coluna(
       df_rotas,
@@ -136,6 +150,7 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
           "CODIGO_DESTINO",
           "COD_DESTINO",
       ],
+      excluir=["DESCRICAO", "DESC", "NOME"],
   )
   col_o = encontrar_coluna(
       df_rotas,
@@ -145,7 +160,7 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
           "NOME_ORIGEM",
           "ORIGEM",
       ],
-      excluir=["COD", "CODIGO"],
+      excluir=["COD", "CODIGO", "ID"],
   )
   col_d = encontrar_coluna(
       df_rotas,
@@ -155,13 +170,22 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
           "NOME_DESTINO",
           "DESTINO",
       ],
-      excluir=["COD", "CODIGO"],
+      excluir=["COD", "CODIGO", "ID"],
   )
 
-  col_uf_o = encontrar_coluna(df_rotas, ["UF"], excluir=["DESTINO", "1"])
+  col_uf_o = encontrar_coluna(
+      df_rotas, ["UF"], excluir=["DESTINO", "1", "DEST"]
+  )
   col_uf_d = encontrar_coluna(
       df_rotas, ["UF.1", "UF_DESTINO", "UF DESTINO", "UF"]
   )
+
+  s_cod_o = extrair_series(df_rotas, col_cod_o)
+  s_cod_d = extrair_series(df_rotas, col_cod_d)
+  s_o = extrair_series(df_rotas, col_o)
+  s_d = extrair_series(df_rotas, col_d)
+  s_uf_o = extrair_series(df_rotas, col_uf_o)
+  s_uf_d = extrair_series(df_rotas, col_uf_d)
 
   # PROCX com De_Para_KMs
   if df_kms_in is not None and not df_kms_in.empty:
@@ -171,54 +195,36 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
     col_dest_maps = encontrar_coluna(df_kms, ["DESTINO"])
 
     if col_km_maps and col_orig_maps and col_dest_maps:
-      df_kms["KM_CLEAN"] = df_kms[col_km_maps].apply(limpar_numero_br_correto)
+      s_km_maps = extrair_series(df_kms, col_km_maps)
+      s_orig_maps = extrair_series(df_kms, col_orig_maps)
+      s_dest_maps = extrair_series(df_kms, col_dest_maps)
+
+      df_kms["KM_CLEAN"] = s_km_maps.apply(limpar_numero_br_correto)
       df_kms["CHAVE_LOOKUP"] = (
-          df_kms[col_orig_maps].astype(str).str.strip().str.upper().str.replace(
-              " ", ""
-          )
-          + df_kms[col_dest_maps].astype(str).str.strip().str.upper().str.replace(
-              " ", ""
-          )
+          s_orig_maps.str.upper().str.replace(" ", "")
+          + s_dest_maps.str.upper().str.replace(" ", "")
       )
       km_dict = df_kms.groupby("CHAVE_LOOKUP")["KM_CLEAN"].first().to_dict()
 
       df_rotas["CHAVE_LOOKUP"] = (
-          df_rotas[col_o].astype(str).str.strip().str.upper().str.replace(
-              " ", ""
-          )
-          + df_rotas[col_d].astype(str).str.strip().str.upper().str.replace(
-              " ", ""
-          )
+          s_o.str.upper().str.replace(" ", "")
+          + s_d.str.upper().str.replace(" ", "")
       )
       df_rotas["KM_GOOGLE_MAPS"] = df_rotas["CHAVE_LOOKUP"].map(km_dict)
 
-  # Formatação do Seletor: [CÓDIGO] CIDADE - UF ➔ [CÓDIGO] CIDADE - UF
-  cod_o_str = (
-      "[" + df_rotas[col_cod_o].astype(str).str.strip() + "] "
-      if col_cod_o
-      else ""
+  # Construção segura do nome da rota no seletor
+  origem_str = (
+      ("[" + s_cod_o + "] ").where(s_cod_o != "", "")
+      + s_o
+      + (" - " + s_uf_o).where(s_uf_o != "", "")
   )
-  cod_d_str = (
-      "[" + df_rotas[col_cod_d].astype(str).str.strip() + "] "
-      if col_cod_d
-      else ""
-  )
-  uf_o_str = (
-      " - " + df_rotas[col_uf_o].astype(str).str.strip() if col_uf_o else ""
-  )
-  uf_d_str = (
-      " - " + df_rotas[col_uf_d].astype(str).str.strip() if col_uf_d else ""
+  destino_str = (
+      ("[" + s_cod_d + "] ").where(s_cod_d != "", "")
+      + s_d
+      + (" - " + s_uf_d).where(s_uf_d != "", "")
   )
 
-  df_rotas["ROTA_NOME"] = (
-      cod_o_str
-      + df_rotas[col_o].astype(str).str.strip()
-      + uf_o_str
-      + " ➔ "
-      + cod_d_str
-      + df_rotas[col_d].astype(str).str.strip()
-      + uf_d_str
-  )
+  df_rotas["ROTA_NOME"] = origem_str + " ➔ " + destino_str
 
   return df_rotas, col_o, col_d
 
@@ -511,7 +517,7 @@ if not df_rotas_bruta.empty:
         .str.upper()
     )
 
-  # Formatação e PROCX dos KMs do Google Maps
+  # Formatação e PROCX dos KMs do Google Maps de forma 100% segura
   df_rotas, col_o_global, col_d_global = preparar_rotas_com_km_maps(
       df_rotas, df_kms_bruta
   )
@@ -524,27 +530,27 @@ if not df_rotas_bruta.empty:
   col_status = encontrar_coluna(df_rotas, ["STATUS"])
 
   base = (
-      df_rotas[col_base].apply(limpar_numero_br_correto)
+      extrair_series(df_rotas, col_base).apply(limpar_numero_br_correto)
       if col_base
       else pd.Series([0.0] * len(df_rotas))
   )
   contrato = (
-      df_rotas[col_contrato].apply(limpar_numero_br_correto)
+      extrair_series(df_rotas, col_contrato).apply(limpar_numero_br_correto)
       if col_contrato
       else pd.Series([0.0] * len(df_rotas))
   )
   frete_considerado = (
-      df_rotas[col_frete].apply(limpar_numero_br_correto)
+      extrair_series(df_rotas, col_frete).apply(limpar_numero_br_correto)
       if col_frete
       else pd.Series([0.0] * len(df_rotas))
   )
   pedagio = (
-      df_rotas[col_pedagio].apply(limpar_numero_br_correto)
+      extrair_series(df_rotas, col_pedagio).apply(limpar_numero_br_correto)
       if col_pedagio
       else pd.Series([0.0] * len(df_rotas))
   )
   volume = (
-      df_rotas[col_vol].apply(limpar_numero_br_correto)
+      extrair_series(df_rotas, col_vol).apply(limpar_numero_br_correto)
       if col_vol
       else pd.Series([1.0] * len(df_rotas))
   )
@@ -560,22 +566,9 @@ if not df_rotas_bruta.empty:
   df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
 
   if col_status:
-    rotas_dentro = len(
-        df_rotas[
-            df_rotas[col_status]
-            .astype(str)
-            .str.upper()
-            .str.contains("DENTRO", na=False)
-        ]
-    )
-    rotas_abaixo = len(
-        df_rotas[
-            df_rotas[col_status]
-            .astype(str)
-            .str.upper()
-            .str.contains("ABAIXO", na=False)
-        ]
-    )
+    s_status = extrair_series(df_rotas, col_status).str.upper()
+    rotas_dentro = len(df_rotas[s_status.str.contains("DENTRO", na=False)])
+    rotas_abaixo = len(df_rotas[s_status.str.contains("ABAIXO", na=False)])
   else:
     rotas_dentro = 0
     rotas_abaixo = 0
@@ -626,11 +619,10 @@ if not df_rotas_bruta.empty:
       )
 
       if col_origem:
-        df_rotas[col_origem] = (
-            df_rotas[col_origem].astype(str).str.strip().str.upper()
-        )
+        s_origem_cat = extrair_series(df_rotas, col_origem).str.upper()
+        df_rotas["CD_ORIGEM_CAT"] = s_origem_cat
         df_chart = (
-            df_rotas.groupby(col_origem)["Custo_Total_Ponderado"]
+            df_rotas.groupby("CD_ORIGEM_CAT")["Custo_Total_Ponderado"]
             .sum()
             .reset_index()
         )
@@ -645,7 +637,7 @@ if not df_rotas_bruta.empty:
           )
           df_chart = df_chart.rename(
               columns={
-                  col_origem: "CD de Origem",
+                  "CD_ORIGEM_CAT": "CD de Origem",
                   "Custo_Total_Ponderado": "Custo R$",
               }
           )
@@ -667,10 +659,18 @@ if not df_rotas_bruta.empty:
       col_lon_d = encontrar_coluna(df_rotas, ["LON"], excluir=["ORIG"])
 
       if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
-        df_rotas["lat_origem"] = df_rotas[col_lat_o].apply(limpar_coordenada)
-        df_rotas["lon_origem"] = df_rotas[col_lon_o].apply(limpar_coordenada)
-        df_rotas["lat_destino"] = df_rotas[col_lat_d].apply(limpar_coordenada)
-        df_rotas["lon_destino"] = df_rotas[col_lon_d].apply(limpar_coordenada)
+        df_rotas["lat_origem"] = extrair_series(
+            df_rotas, col_lat_o
+        ).apply(limpar_coordenada)
+        df_rotas["lon_origem"] = extrair_series(
+            df_rotas, col_lon_o
+        ).apply(limpar_coordenada)
+        df_rotas["lat_destino"] = extrair_series(
+            df_rotas, col_lat_d
+        ).apply(limpar_coordenada)
+        df_rotas["lon_destino"] = extrair_series(
+            df_rotas, col_lon_d
+        ).apply(limpar_coordenada)
 
         df_mapa = df_rotas.dropna(
             subset=["lat_origem", "lon_origem", "lat_destino", "lon_destino"]
@@ -678,14 +678,14 @@ if not df_rotas_bruta.empty:
 
         if not df_mapa.empty:
           col_origem_nome = col_o_global or encontrar_coluna(
-              df_mapa, ["DESCRICAO", "NOME", "ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM"]
+              df_mapa,
+              ["DESCRICAO", "NOME", "ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM"],
           )
           if col_origem_nome:
-            contagem_origem = (
-                df_mapa[col_origem_nome].value_counts().to_dict()
-            )
+            s_orig_mapa = extrair_series(df_mapa, col_origem_nome)
+            contagem_origem = s_orig_mapa.value_counts().to_dict()
             df_mapa["densidade_origem"] = (
-                df_mapa[col_origem_nome].map(contagem_origem).fillna(1)
+                s_orig_mapa.map(contagem_origem).fillna(1)
             )
           else:
             df_mapa["densidade_origem"] = 1
@@ -778,7 +778,8 @@ if not df_rotas_bruta.empty:
       )
 
       if "ROTA_NOME" in df_rotas.columns:
-        lista_rotas = sorted(df_rotas["ROTA_NOME"].dropna().unique().tolist())
+        s_rotas_nomes = extrair_series(df_rotas, "ROTA_NOME")
+        lista_rotas = sorted(s_rotas_nomes[s_rotas_nomes != ""].unique().tolist())
 
         rota_selecionada = st.selectbox(
             "🎯 Selecione ou digite a Rota (Código, Cidade ou UF):",
@@ -1006,10 +1007,9 @@ if not df_rotas_bruta.empty:
 
     resumo_rotas_abaixo = ""
     if not df_rotas.empty and col_status:
+      s_status_chat = extrair_series(df_rotas, col_status).str.lower()
       df_temp = df_rotas.copy()
-      df_temp["STATUS_CLEAN"] = (
-          df_temp[col_status].astype(str).str.strip().str.lower()
-      )
+      df_temp["STATUS_CLEAN"] = s_status_chat
       df_abaixo_real = df_temp[
           df_temp["STATUS_CLEAN"].str.contains("abaixo", na=False)
       ].copy()
@@ -1019,7 +1019,8 @@ if not df_rotas_bruta.empty:
       )
 
       if col_dif_antt:
-        df_abaixo_real["DIF_R$_NUM"] = df_abaixo_real[col_dif_antt].apply(
+        s_dif_antt = extrair_series(df_abaixo_real, col_dif_antt)
+        df_abaixo_real["DIF_R$_NUM"] = s_dif_antt.apply(
             limpar_numero_br_correto
         )
         top_15_abaixo = df_abaixo_real.sort_values(
