@@ -113,7 +113,7 @@ def limpar_numero_br_correto(valor):
 
 
 def formatar_rotas_codigo_nome_safe(df_rotas_in):
-  """Cria a chave Alex (OrigemDestino) e formata o nome com Código + Nome em cópia segura."""
+  """Cria a chave (OrigemDestino) e formata o nome com Código + Nome em cópia segura."""
   if df_rotas_in is None or df_rotas_in.empty:
     return df_rotas_in, None, None
 
@@ -750,9 +750,9 @@ if not df_rotas_bruta.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO FIEL À PLANILHA DO ALEX (PROCX & 10 PILARES)
+    # 📋 ABA: SHOULD COST DINÂMICO FIEL À PLANILHA (PROCX & 10 PILARES)
     with aba_should_cost:
-      st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Alex)")
+      st.markdown("### 📋 SIMULADOR DE FRETES")
       st.caption(
           "Cálculo exato de frete por viagem, ANTT, horas operacionais e"
           " composição de custos."
@@ -795,7 +795,7 @@ if not df_rotas_bruta.empty:
               else "CARRETA"
           )
 
-          # MOTOR DE CÁLCULO FIEL À PLANILHA DO ALEX
+          # MOTOR DE CÁLCULO FIEL À PLANILHA
           factor_km = km_rota / 2310.0
           velocidade_media = 65.0  # km/h
           tempo_transito_h = km_rota / velocidade_media  # 35.5 h para 2.310 km
@@ -810,7 +810,7 @@ if not df_rotas_bruta.empty:
 
           dias_operacao = tempo_total_h / 10.0  # 7.2 dias para 2.310 km
 
-          # COMPOSIÇÃO DE CUSTOS MENSAIS DO ATIVO DEDICADO (ALEX)
+          # COMPOSIÇÃO DE CUSTOS MENSAIS DO ATIVO DEDICADO
           veiculo_mes = 39764.20 * factor_km
           mao_obra_mes = 102837.00
           docs_mes = 322.70
@@ -851,7 +851,7 @@ if not df_rotas_bruta.empty:
               else 0.0
           )
 
-          # EXIBIÇÃO IDÊNTICA À TELA DO ALEX (IMAGENS 1 E 2)
+         
           st.write("---")
           c1, c2, c3 = st.columns([1.2, 1, 1])
           c1.metric(
