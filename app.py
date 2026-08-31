@@ -80,7 +80,7 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
 
 
 def limpar_numero_br_correto(valor):
-  """Converte formatos de moeda e milhar brasileiros (ex: '2.310' -> 2310.0) sem truncar números."""
+  """Converte formatos de moeda e milhar brasileiros (ex: '2.312,955' -> 2312.955) sem truncar números."""
   if pd.isna(valor):
     return 0.0
   v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
@@ -112,126 +112,115 @@ def limpar_numero_br_correto(valor):
     return 0.0
 
 
-def formatar_rotas_codigo_nome_safe(df_rotas_in):
-  """Cria a chave (OrigemDestino) e formata o nome com Código + Nome em cópia segura."""
+def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
+  """Aplica o PROCX do De_Para_KMs do Google Maps sobre as Rotas Ativas."""
   if df_rotas_in is None or df_rotas_in.empty:
     return df_rotas_in, None, None
 
   df_rotas = df_rotas_in.copy()
 
-  col_desc_o = encontrar_coluna(
-      df_rotas,
-      [
-          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
-          "DESCRICAO ZONA DE TRANSPORTE ORIGEM",
-          "DESCRICAO_ORIGEM",
-          "DESCRICAO ORIGEM",
-          "DESC_ORIGEM",
-          "NOME_ORIGEM",
-          "DESCRICAO_ORIG",
-      ],
-      excluir=["DESTINO", "DEST"],
-  )
-  col_desc_d = encontrar_coluna(
-      df_rotas,
-      [
-          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
-          "DESCRICAO ZONA DE TRANSPORTE DESTINO",
-          "DESCRICAO_DESTINO",
-          "DESCRICAO DESTINO",
-          "DESC_DESTINO",
-          "NOME_DESTINO",
-          "DESCRICAO_DEST",
-      ],
-      excluir=["ORIGEM", "ORIG"],
-  )
-
   col_cod_o = encontrar_coluna(
       df_rotas,
       [
-          "CODIGO_ZONA_DE_TRANSPORTE_ORIGEM",
-          "CODIGO ZONA DE TRANSPORTE ORIGEM",
           "ZONA_DE_TRANSPORTE_ORIGEM",
-          "ZONA DE TRANSPORTE ORIGEM",
+          "CODIGO_ZONA_DE_TRANSPORTE_ORIGEM",
           "CODIGO_ORIGEM",
           "COD_ORIGEM",
-          "CD_ORIGEM",
-          "COD_O",
       ],
-      excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
   )
   col_cod_d = encontrar_coluna(
       df_rotas,
       [
-          "CODIGO_ZONA_DE_TRANSPORTE_DESTINO",
-          "CODIGO ZONA DE TRANSPORTE DESTINO",
           "ZONA_DE_TRANSPORTE_DESTINO",
-          "ZONA DE TRANSPORTE DESTINO",
+          "CODIGO_ZONA_DE_TRANSPORTE_DESTINO",
           "CODIGO_DESTINO",
           "COD_DESTINO",
-          "CD_DESTINO",
-          "COD_D",
       ],
-      excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
+  )
+  col_o = encontrar_coluna(
+      df_rotas,
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "DESCRICAO_ORIGEM",
+          "NOME_ORIGEM",
+          "ORIGEM",
+      ],
+      excluir=["COD", "CODIGO"],
+  )
+  col_d = encontrar_coluna(
+      df_rotas,
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
+          "DESCRICAO_DESTINO",
+          "NOME_DESTINO",
+          "DESTINO",
+      ],
+      excluir=["COD", "CODIGO"],
   )
 
-  col_name_o = (
-      col_desc_o
-      if col_desc_o
-      else encontrar_coluna(
-          df_rotas,
-          ["ORIGEM", "ORIG"],
-          excluir=["DESTINO", "DEST", "CODIGO", "COD", "CD", col_cod_o],
+  col_uf_o = encontrar_coluna(df_rotas, ["UF"], excluir=["DESTINO", "1"])
+  col_uf_d = encontrar_coluna(
+      df_rotas, ["UF.1", "UF_DESTINO", "UF DESTINO", "UF"]
+  )
+
+  # PROCX com De_Para_KMs
+  if df_kms_in is not None and not df_kms_in.empty:
+    df_kms = df_kms_in.copy()
+    col_km_maps = encontrar_coluna(df_kms, ["KM"])
+    col_orig_maps = encontrar_coluna(df_kms, ["ORIGEM"])
+    col_dest_maps = encontrar_coluna(df_kms, ["DESTINO"])
+
+    if col_km_maps and col_orig_maps and col_dest_maps:
+      df_kms["KM_CLEAN"] = df_kms[col_km_maps].apply(limpar_numero_br_correto)
+      df_kms["CHAVE_LOOKUP"] = (
+          df_kms[col_orig_maps].astype(str).str.strip().str.upper().str.replace(
+              " ", ""
+          )
+          + df_kms[col_dest_maps].astype(str).str.strip().str.upper().str.replace(
+              " ", ""
+          )
       )
-  )
-  col_name_d = (
-      col_desc_d
-      if col_desc_d
-      else encontrar_coluna(
-          df_rotas,
-          ["DESTINO", "DEST"],
-          excluir=["ORIGEM", "ORIG", "CODIGO", "COD", "CD", col_cod_d],
+      km_dict = df_kms.groupby("CHAVE_LOOKUP")["KM_CLEAN"].first().to_dict()
+
+      df_rotas["CHAVE_LOOKUP"] = (
+          df_rotas[col_o].astype(str).str.strip().str.upper().str.replace(
+              " ", ""
+          )
+          + df_rotas[col_d].astype(str).str.strip().str.upper().str.replace(
+              " ", ""
+          )
       )
+      df_rotas["KM_GOOGLE_MAPS"] = df_rotas["CHAVE_LOOKUP"].map(km_dict)
+
+  # Formatação do Seletor: [CÓDIGO] CIDADE - UF ➔ [CÓDIGO] CIDADE - UF
+  cod_o_str = (
+      "[" + df_rotas[col_cod_o].astype(str).str.strip() + "] "
+      if col_cod_o
+      else ""
+  )
+  cod_d_str = (
+      "[" + df_rotas[col_cod_d].astype(str).str.strip() + "] "
+      if col_cod_d
+      else ""
+  )
+  uf_o_str = (
+      " - " + df_rotas[col_uf_o].astype(str).str.strip() if col_uf_o else ""
+  )
+  uf_d_str = (
+      " - " + df_rotas[col_uf_d].astype(str).str.strip() if col_uf_d else ""
   )
 
-  # Chave concatenada para PROCX (Origem & Destino)
-  if col_name_o and col_name_d:
-    df_rotas["CHAVE_PROCX"] = (
-        df_rotas[col_name_o].astype(str).str.strip().str.upper()
-        + df_rotas[col_name_d].astype(str).str.strip().str.upper()
-    )
+  df_rotas["ROTA_NOME"] = (
+      cod_o_str
+      + df_rotas[col_o].astype(str).str.strip()
+      + uf_o_str
+      + " ➔ "
+      + cod_d_str
+      + df_rotas[col_d].astype(str).str.strip()
+      + uf_d_str
+  )
 
-  if (
-      col_cod_o
-      and col_name_o
-      and col_cod_d
-      and col_name_d
-      and col_cod_o != col_name_o
-      and col_cod_d != col_name_d
-  ):
-    df_rotas["ROTA_NOME"] = (
-        df_rotas[col_cod_o].astype(str).str.strip()
-        + " - "
-        + df_rotas[col_name_o].astype(str).str.strip()
-        + " ➔ "
-        + df_rotas[col_cod_d].astype(str).str.strip()
-        + " - "
-        + df_rotas[col_name_d].astype(str).str.strip()
-    )
-  elif col_name_o and col_name_d:
-    df_rotas["ROTA_NOME"] = (
-        df_rotas[col_name_o].astype(str).str.strip()
-        + " ➔ "
-        + df_rotas[col_name_d].astype(str).str.strip()
-    )
-  elif col_cod_o and col_cod_d:
-    df_rotas["ROTA_NOME"] = (
-        df_rotas[col_cod_o].astype(str).str.strip()
-        + " ➔ "
-        + df_rotas[col_cod_d].astype(str).str.strip()
-    )
-
-  return df_rotas, col_name_o or col_cod_o, col_name_d or col_cod_d
+  return df_rotas, col_o, col_d
 
 
 def limpar_coordenada(coord):
@@ -410,6 +399,15 @@ def ler_base_sheets():
     antt = []
 
   try:
+    kms = (
+        planilha.worksheet("De_Para_KMs").get_all_records()
+        if "De_Para_KMs" in [w.title for w in planilha.worksheets()]
+        else planilha.worksheet("De_Para_KM").get_all_records()
+    )
+  except:
+    kms = []
+
+  try:
     param_custos = (
         planilha.worksheet("Parametros_Custos").get_all_records()
         if "Parametros_Custos" in [w.title for w in planilha.worksheets()]
@@ -431,6 +429,7 @@ def ler_base_sheets():
           f" {param_custos}"
       ),
       "tabela": df_rotas,
+      "de_para_kms": pd.DataFrame(kms),
       "param_custos": pd.DataFrame(param_custos),
       "fipe": pd.DataFrame(fipe),
   }
@@ -452,11 +451,13 @@ try:
   dados = ler_base_sheets()
   contexto_ia = dados["contexto"]
   df_rotas_bruta = dados["tabela"].copy()
+  df_kms_bruta = dados["de_para_kms"].copy()
   df_param_custos = dados["param_custos"]
   df_fipe = dados["fipe"]
 except Exception as e:
   st.error(f"Erro ao conectar com o Google Sheets: {e}")
   df_rotas_bruta = pd.DataFrame()
+  df_kms_bruta = pd.DataFrame()
   df_param_custos = pd.DataFrame()
   df_fipe = pd.DataFrame()
 
@@ -501,9 +502,18 @@ if not df_rotas_bruta.empty:
       .str.upper()
   )
 
-  # Formatação global de rotas com Código + Nome em cópia segura
-  df_rotas, col_o_global, col_d_global = formatar_rotas_codigo_nome_safe(
-      df_rotas
+  if not df_kms_bruta.empty:
+    df_kms_bruta.columns = (
+        df_kms_bruta.columns.astype(str)
+        .str.replace("\n", "")
+        .str.replace("\r", "")
+        .str.strip()
+        .str.upper()
+    )
+
+  # Formatação e PROCX dos KMs do Google Maps
+  df_rotas, col_o_global, col_d_global = preparar_rotas_com_km_maps(
+      df_rotas, df_kms_bruta
   )
 
   col_base = encontrar_coluna(df_rotas, ["CUSTO", "BASE"])
@@ -750,17 +760,17 @@ if not df_rotas_bruta.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO FIEL À PLANILHA (PROCX & 10 PILARES)
+    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA (PROCX COM DE_PARA_KMS)
     with aba_should_cost:
-      st.markdown("### 📋 SIMULADOR DE FRETES")
+      st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Alex)")
       st.caption(
           "Cálculo exato de frete por viagem, ANTT, horas operacionais e"
-          " composição de custos."
+          " composição com KMs do Google Maps."
       )
 
-      col_km = encontrar_coluna(
+      col_km_fallback = encontrar_coluna(
           df_rotas,
-          ["DISTÂNCIA", "DISTANCIA", "KM"],
+          ["KM'S CONFERIDOS", "DISTÂNCIA", "DISTANCIA", "KM"],
           excluir=["PONDE", "TOTAL", "MÊS", "MES", "SPEND"],
       )
       col_veic = encontrar_coluna(
@@ -771,7 +781,7 @@ if not df_rotas_bruta.empty:
         lista_rotas = sorted(df_rotas["ROTA_NOME"].dropna().unique().tolist())
 
         rota_selecionada = st.selectbox(
-            "🎯 Selecione ou digite a Rota (Código ou Nome):",
+            "🎯 Selecione ou digite a Rota (Código, Cidade ou UF):",
             lista_rotas,
             key="sb_should_cost_rota",
         )
@@ -781,13 +791,21 @@ if not df_rotas_bruta.empty:
         if not df_foco.empty:
           df_rota_foco = df_foco.iloc[0]
 
-          # Extração correta da distância em milhar
-          km_val = (
-              limpar_numero_br_correto(df_rota_foco.get(col_km, 0))
-              if col_km
-              else 0.0
-          )
-          km_rota = km_val if km_val > 0 else 2310.0
+          # Prioriza o KM do De_Para_KMs (Google Maps)
+          km_maps = df_rota_foco.get("KM_GOOGLE_MAPS", None)
+          if (
+              pd.notna(km_maps)
+              and isinstance(km_maps, (int, float))
+              and km_maps > 0
+          ):
+            km_rota = float(km_maps)
+          else:
+            km_val = (
+                limpar_numero_br_correto(df_rota_foco.get(col_km_fallback, 0))
+                if col_km_fallback
+                else 0.0
+            )
+            km_rota = km_val if km_val > 0 else 2310.0
 
           perfil_veic_str = (
               str(df_rota_foco.get(col_veic, "CARRETA")).upper()
@@ -795,22 +813,15 @@ if not df_rotas_bruta.empty:
               else "CARRETA"
           )
 
-          # MOTOR DE CÁLCULO FIEL À PLANILHA
+          # MOTOR DE CÁLCULO FIEL À PLANILHA DO ALEX
           factor_km = km_rota / 2310.0
           velocidade_media = 65.0  # km/h
-          tempo_transito_h = km_rota / velocidade_media  # 35.5 h para 2.310 km
+          tempo_transito_h = km_rota / velocidade_media
           tempo_carga_h, tempo_descarga_h = 12.0, 12.0
-          tempo_total_h = (
-              tempo_transito_h * 2.0
-          ) if (tempo_carga_h == 12 and tempo_descarga_h == 12) else (
-              tempo_transito_h + tempo_carga_h + tempo_descarga_h
-          )
-          if tempo_total_h < 71.5 and km_rota >= 2000:
-            tempo_total_h = 71.5385 * factor_km
+          tempo_total_h = (tempo_transito_h * 2.0) + tempo_carga_h + tempo_descarga_h
+          dias_operacao = tempo_total_h / 10.0  # 10h jornada por dia
 
-          dias_operacao = tempo_total_h / 10.0  # 7.2 dias para 2.310 km
-
-          # COMPOSIÇÃO DE CUSTOS MENSAIS DO ATIVO DEDICADO
+          # COMPOSIÇÃO DE CUSTOS MENSAIS DO ATIVO DEDICADO (ALEX)
           veiculo_mes = 39764.20 * factor_km
           mao_obra_mes = 102837.00
           docs_mes = 322.70
@@ -851,7 +862,7 @@ if not df_rotas_bruta.empty:
               else 0.0
           )
 
-         
+          # EXIBIÇÃO IDÊNTICA À TELA DO ALEX
           st.write("---")
           c1, c2, c3 = st.columns([1.2, 1, 1])
           c1.metric(
@@ -873,8 +884,10 @@ if not df_rotas_bruta.empty:
           st.write("")
           c4, c5, c6 = st.columns(3)
           c4.metric(
-              "Distância da Rota",
-              f"{km_rota:,.0f} km".replace(",", "."),
+              "Distância da Rota (Google Maps)",
+              f"{km_rota:,.1f} km".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", "."),
               delta="Percurso One-Way",
           )
           c5.metric("Tempo Total (H)", f"{tempo_total_h:.1f} h")
@@ -954,7 +967,6 @@ if not df_rotas_bruta.empty:
             )
 
           with col_pie:
-            # Gráfico de Categorias: Fixo, Variável e Mão de Obra
             custo_fixo_cat = veiculo_mes + docs_mes + seguros_mes
             custo_var_cat = (
                 manutencao_mes + combustivel_mes + lub_lav_mes + pneu_mes
