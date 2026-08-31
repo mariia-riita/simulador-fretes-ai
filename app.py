@@ -41,9 +41,9 @@ st.markdown(
     .item-legenda { display: flex; align-items: center; gap: 6px; }
     .bola-legenda { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 
-    /* Fix para evitar corte de texto e números nos Cards de Métricas */
+    /* Ajuste para evitar corte de texto nos Cards de Métricas */
     [data-testid="stMetricValue"] {
-        font-size: 20px !important;
+        font-size: 19px !important;
     }
     [data-testid="stMetricLabel"] {
         font-size: 12px !important;
@@ -64,7 +64,20 @@ LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. MÁQUINAS DE LIMPEZA E TRATAMENTO DE DADOS ---
+# --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
+def encontrar_coluna(df, palavras_chave, excluir=[]):
+  """Encontra colunas no DataFrame de forma dinâmica ignorando formatações variadas."""
+  if df is None or df.empty:
+    return None
+  for col in df.columns:
+    col_str = str(col).upper().strip()
+    if any(kw.upper() in col_str for kw in palavras_chave) and not any(
+        ex.upper() in col_str for ex in excluir
+    ):
+      return col
+  return None
+
+
 def limpar_numero_br(valor):
   if pd.isna(valor):
     return 0.0
@@ -228,10 +241,11 @@ def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
 
     try:
       aba_rotas = planilha.worksheet("Rotas_Ativas")
-      novos_valores = [
-          [v] for v in df_rotas_calculadas["CUSTO_TOTAL"].tolist()
-      ]
-      aba_rotas.update(f"N2:N{len(novos_valores)+1}", novos_valores)
+      if "CUSTO_TOTAL" in df_rotas_calculadas.columns:
+        novos_valores = [
+            [v] for v in df_rotas_calculadas["CUSTO_TOTAL"].tolist()
+        ]
+        aba_rotas.update(f"N2:N{len(novos_valores)+1}", novos_valores)
     except Exception:
       pass
 
@@ -355,16 +369,13 @@ if not df_rotas.empty:
       .str.upper()
   )
 
-  col_base = next(
-      (c for c in df_rotas.columns if "CUSTO" in c and "BASE" in c), None
-  )
-  col_contrato = next((c for c in df_rotas.columns if "CONTRATO" in c), None)
-  col_frete = next(
-      (c for c in df_rotas.columns if "FRETE" in c and "CONS" in c), None
-  )
-  col_pedagio = next((c for c in df_rotas.columns if "PEDAGIO" in c), None)
-  col_vol = next((c for c in df_rotas.columns if "VOL" in c), None)
-  col_status = next((c for c in df_rotas.columns if "STATUS" in c), None)
+  # Localização dinâmica de colunas principais
+  col_base = encontrar_coluna(df_rotas, ["CUSTO", "BASE"])
+  col_contrato = encontrar_coluna(df_rotas, ["CONTRATO"])
+  col_frete = encontrar_coluna(df_rotas, ["FRETE", "CONS"])
+  col_pedagio = encontrar_coluna(df_rotas, ["PEDAGIO", "PEDÁGIO"])
+  col_vol = encontrar_coluna(df_rotas, ["VOL", "VOLUME"])
+  col_status = encontrar_coluna(df_rotas, ["STATUS"])
 
   base = (
       df_rotas[col_base].apply(limpar_numero_br)
@@ -464,9 +475,11 @@ if not df_rotas.empty:
 
     with aba_barras:
       st.markdown("### 📊 Custo por CD de Origem")
-      col_origem = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
+      col_origem = encontrar_coluna(
+          df_rotas, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
+      )
 
-      if col_origem in df_rotas.columns:
+      if col_origem:
         df_rotas[col_origem] = (
             df_rotas[col_origem].astype(str).str.strip().str.upper()
         )
@@ -502,18 +515,10 @@ if not df_rotas.empty:
 
     # 🗺️ MAPA LOGÍSTICO DENSIDADE + ARCOS
     with aba_mapa:
-      col_lat_o = next(
-          (c for c in df_rotas.columns if "LAT" in c and "ORIG" in c), None
-      )
-      col_lon_o = next(
-          (c for c in df_rotas.columns if "LON" in c and "ORIG" in c), None
-      )
-      col_lat_d = next(
-          (c for c in df_rotas.columns if "LAT" in c and "DEST" in c), None
-      )
-      col_lon_d = next(
-          (c for c in df_rotas.columns if "LON" in c and "DEST" in c), None
-      )
+      col_lat_o = encontrar_coluna(df_rotas, ["LAT"], excluir=["DEST"])
+      col_lon_o = encontrar_coluna(df_rotas, ["LON"], excluir=["DEST"])
+      col_lat_d = encontrar_coluna(df_rotas, ["LAT"], excluir=["ORIG"])
+      col_lon_d = encontrar_coluna(df_rotas, ["LON"], excluir=["ORIG"])
 
       if col_lat_o and col_lon_o and col_lat_d and col_lon_d:
         df_rotas["lat_origem"] = df_rotas[col_lat_o].apply(limpar_coordenada)
@@ -526,8 +531,10 @@ if not df_rotas.empty:
         ).copy()
 
         if not df_mapa.empty:
-          col_origem_nome = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
-          if col_origem_nome in df_mapa.columns:
+          col_origem_nome = encontrar_coluna(
+              df_mapa, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
+          )
+          if col_origem_nome:
             contagem_origem = (
                 df_mapa[col_origem_nome].value_counts().to_dict()
             )
@@ -607,7 +614,7 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO
+    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA
     with aba_should_cost:
       st.markdown(
           "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
@@ -617,183 +624,220 @@ if not df_rotas.empty:
           " viagem e dados FIPE da sua planilha."
       )
 
-      col_o = "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM"
-      col_d = "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO"
-      col_km = next(
-          (c for c in df_rotas.columns if "KM" in c or "DIST" in c), None
+      col_o = encontrar_coluna(
+          df_rotas, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
+      )
+      col_d = encontrar_coluna(
+          df_rotas, ["DESTINO", "ZONA_DE_TRANSPORTE_DESTINO", "DEST"]
+      )
+      col_km = encontrar_coluna(
+          df_rotas,
+          ["DISTÂNCIA", "DISTANCIA", "KM"],
+          excluir=["PONDE", "TOTAL", "MÊS", "MES", "SPEND"],
+      )
+      col_veic = encontrar_coluna(
+          df_rotas, ["VEÍCULO", "VEICULO", "PERFIL", "EQUIPAMENTO", "TIPO"]
       )
 
-      if col_o in df_rotas.columns and col_d in df_rotas.columns:
+      if col_o and col_d:
         df_rotas["ROTA_NOME"] = (
-            df_rotas[col_o].astype(str) + " ➔ " + df_rotas[col_d].astype(str)
+            df_rotas[col_o].astype(str).str.strip()
+            + " ➔ "
+            + df_rotas[col_d].astype(str).str.strip()
         )
-        lista_rotas = sorted(df_rotas["ROTA_NOME"].unique().tolist())
+        lista_rotas = sorted(df_rotas["ROTA_NOME"].dropna().unique().tolist())
 
         rota_selecionada = st.selectbox(
-            "🎯 Selecione a Rota da Operação:", lista_rotas
+            "🎯 Selecione a Rota da Operação:",
+            lista_rotas,
+            key="sb_should_cost_rota",
         )
 
-        df_rota_foco = df_rotas[
-            df_rotas["ROTA_NOME"] == rota_selecionada
-        ].iloc[0]
-        km_rota = (
-            limpar_numero_br(df_rota_foco.get(col_km, 1000.0))
-            if col_km
-            else 1000.0
-        )
-        if km_rota <= 0:
-          km_rota = 1000.0
+        df_foco = df_rotas[df_rotas["ROTA_NOME"] == rota_selecionada]
 
-        # CÁLCULO DO TEMPO E VIAGENS/MÊS
-        velocidade_media = 65.0
-        tempo_carga = 12.0
-        tempo_descarga = 24.0
-        dias_trabalho_mes = 24.0
-        jornada_diaria_horas = 10.0
+        if not df_foco.empty:
+          df_rota_foco = df_foco.iloc[0]
 
-        tempo_percurso_horas = (km_rota * 2) / velocidade_media
-        tempo_operacao_total = (
-            tempo_percurso_horas + tempo_carga + tempo_descarga
-        )
-        viagens_mes = max(
-            1.0,
-            (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total,
-        )
+          km_val = (
+              limpar_numero_br(df_rota_foco.get(col_km, 0)) if col_km else 0.0
+          )
+          km_rota = km_val if km_val > 0 else 1000.0
 
-        # CÁLCULO DINÂMICO DOS CUSTOS POR VIAGEM
-        rendimento_km_l = 3.0
-        custo_diesel_km = (diesel_medio_atual / rendimento_km_l) + 0.08
-        c_combustivel = custo_diesel_km * (km_rota * 2)
+          perfil_veic_str = (
+              str(df_rota_foco.get(col_veic, "CARRETA")).upper()
+              if col_veic
+              else "CARRETA"
+          )
 
-        c_pneu = 0.335 * (km_rota * 2)
-        c_manutencao = 0.50 * (km_rota * 2)
-        c_lub_lav = 0.094 * (km_rota * 2)
+          # PARÂMETROS FIPE / VEÍCULO
+          if "TRUCK" in perfil_veic_str:
+            prec_veic, prec_impl = 472000.0, 700000.0
+            salario_base, diaria_val = 4800.0, 120.0
+            rendimento_km_l, manut_km_val, pneu_km_val = 3.5, 0.40, 0.32
+            velocidade_media = 45.0
+          elif "RODOTREM" in perfil_veic_str:
+            prec_veic, prec_impl = 762000.0, 950000.0
+            salario_base, diaria_val = 8500.0, 200.0
+            rendimento_km_l, manut_km_val, pneu_km_val = 2.5, 0.65, 0.33
+            velocidade_media = 60.0
+          else:  # Carreta
+            prec_veic, prec_impl = 662000.0, 900000.0
+            salario_base, diaria_val = 6300.0, 170.0
+            rendimento_km_l, manut_km_val, pneu_km_val = 3.0, 0.50, 0.335
+            velocidade_media = 65.0
 
-        deprec_juros_mensal = 22000.0
-        c_veiculo = (deprec_juros_mensal / (viagens_mes * km_rota * 2)) * (
-            km_rota * 2
-        )
+          # CÁLCULO DE TEMPO E VIAGENS/MÊS
+          tempo_carga, tempo_descarga = 12.0, 24.0
+          dias_trabalho_mes, jornada_diaria_horas = 24.0, 10.0
 
-        diarias_viagem = max(1, (km_rota * 2) / 500.0)
-        c_mao_obra = ((11500.0 / viagens_mes)) + (170.0 * diarias_viagem)
+          km_ida_volta = km_rota * 2.0
+          tempo_percurso_horas = km_ida_volta / velocidade_media
+          tempo_operacao_total = (
+              tempo_percurso_horas + tempo_carga + tempo_descarga
+          )
+          viagens_mes = max(
+              0.1,
+              (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total,
+          )
 
-        c_documentos = 600.0 / viagens_mes
-        c_seguros = 4500.0 / viagens_mes
+          # PILARES DE CUSTO RECALCULADOS POR KM
+          custo_diesel_km = (diesel_medio_atual / rendimento_km_l) + 0.08
+          c_combustivel = custo_diesel_km * km_ida_volta
+          c_pneu = pneu_km_val * km_ida_volta
+          c_manutencao = manut_km_val * km_ida_volta
+          c_lub_lav = 0.094 * km_ida_volta
 
-        subtotal_direto = (
-            c_combustivel
-            + c_pneu
-            + c_manutencao
-            + c_lub_lav
-            + c_veiculo
-            + c_mao_obra
-            + c_documentos
-            + c_seguros
-        )
-        c_lucro = subtotal_direto * 0.10
-        c_impostos = (subtotal_direto + c_lucro) * (0.0925 / (1 - 0.0925))
-        total_should_cost_calc = subtotal_direto + c_lucro + c_impostos
+          deprec_juros_mensal = (prec_veic * 0.52 / 60.0) + (
+              prec_impl * 0.55 / 60.0
+          ) + ((prec_veic + prec_impl) * 0.0125)
+          c_veiculo = deprec_juros_mensal / viagens_mes
 
-        pilares_dinamicos = [
-            {
-                "Pilar": "1. Veículo & Implemento (Ativo)",
-                "Valor (R$)": c_veiculo,
-                "%": c_veiculo / total_should_cost_calc,
-            },
-            {
-                "Pilar": "2. Mão de Obra & Diárias",
-                "Valor (R$)": c_mao_obra,
-                "%": c_mao_obra / total_should_cost_calc,
-            },
-            {
-                "Pilar": "3. Documentos (IPVA/Tacógrafo)",
-                "Valor (R$)": c_documentos,
-                "%": c_documentos / total_should_cost_calc,
-            },
-            {
-                "Pilar": "4. Seguros do Ativo",
-                "Valor (R$)": c_seguros,
-                "%": c_seguros / total_should_cost_calc,
-            },
-            {
-                "Pilar": "5. Manutenção Korretiva/Prev.",
-                "Valor (R$)": c_manutencao,
-                "%": c_manutencao / total_should_cost_calc,
-            },
-            {
-                "Pilar": "6. Combustível + ARLA 32",
-                "Valor (R$)": c_combustivel,
-                "%": c_combustivel / total_should_cost_calc,
-            },
-            {
-                "Pilar": "7. Lubrificante & Lavagem",
-                "Valor (R$)": c_lub_lav,
-                "%": c_lub_lav / total_should_cost_calc,
-            },
-            {
-                "Pilar": "8. Pneus & Recapagens",
-                "Valor (R$)": c_pneu,
-                "%": c_pneu / total_should_cost_calc,
-            },
-            {
-                "Pilar": "9. Margem de Lucro (10%)",
-                "Valor (R$)": c_lucro,
-                "%": c_lucro / total_should_cost_calc,
-            },
-            {
-                "Pilar": "10. PIS / COFINS (9,25%)",
-                "Valor (R$)": c_impostos,
-                "%": c_impostos / total_should_cost_calc,
-            },
-        ]
+          diarias_viagem = max(1.0, km_ida_volta / 500.0)
+          c_mao_obra = ((
+              salario_base * 1.75 + 220.0
+          ) / viagens_mes) + (diaria_val * diarias_viagem)
 
-        df_display = pd.DataFrame(pilares_dinamicos)
-        df_display["Participação (%)"] = df_display["%"].apply(
-            lambda x: f"{x*100:.1f}%"
-        )
-        df_display["Valor Calculado (R$)"] = df_display["Valor (R$)"].apply(
-            lambda x: f"R$ {x:,.2f}".replace(",", "X")
-            .replace(".", ",")
-            .replace("X", ".")
-        )
+          c_documentos = (
+              ((prec_veic + prec_impl) * 0.01 / 12.0) + 35.0
+          ) / viagens_mes
+          c_seguros = (
+              (prec_veic * 0.048 / 12.0) + (prec_impl * 0.02 / 12.0)
+          ) / viagens_mes
 
-        # KPIs DA ROTA ORGANIZADOS EM 2 LINHAS (SEM CORTAR TEXTO OU VALOR)
-        c1, c2, c3 = st.columns(3)
-        c1.metric(
-            "Distância Ida e Volta", f"{km_rota*2:,.0f} km".replace(",", ".")
-        )
-        c2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
-        c3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
+          subtotal_direto = (
+              c_combustivel
+              + c_pneu
+              + c_manutencao
+              + c_lub_lav
+              + c_veiculo
+              + c_mao_obra
+              + c_documentos
+              + c_seguros
+          )
+          c_lucro = subtotal_direto * 0.10
+          c_impostos = (subtotal_direto + c_lucro) * (0.0925 / (1.0 - 0.0925))
+          total_should_cost_calc = subtotal_direto + c_lucro + c_impostos
 
-        st.write("")
+          pilares_dinamicos = [
+              {
+                  "Pilar": "1. Veículo & Implemento (Ativo)",
+                  "Valor (R$)": c_veiculo,
+                  "%": c_veiculo / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "2. Mão de Obra & Diárias",
+                  "Valor (R$)": c_mao_obra,
+                  "%": c_mao_obra / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "3. Documentos (IPVA/Tacógrafo)",
+                  "Valor (R$)": c_documentos,
+                  "%": c_documentos / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "4. Seguros do Ativo",
+                  "Valor (R$)": c_seguros,
+                  "%": c_seguros / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "5. Manutenção Korretiva/Prev.",
+                  "Valor (R$)": c_manutencao,
+                  "%": c_manutencao / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "6. Combustível + ARLA 32",
+                  "Valor (R$)": c_combustivel,
+                  "%": c_combustivel / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "7. Lubrificante & Lavagem",
+                  "Valor (R$)": c_lub_lav,
+                  "%": c_lub_lav / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "8. Pneus & Recapagens",
+                  "Valor (R$)": c_pneu,
+                  "%": c_pneu / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "9. Margem de Lucro (10%)",
+                  "Valor (R$)": c_lucro,
+                  "%": c_lucro / total_should_cost_calc,
+              },
+              {
+                  "Pilar": "10. PIS / COFINS (9,25%)",
+                  "Valor (R$)": c_impostos,
+                  "%": c_impostos / total_should_cost_calc,
+              },
+          ]
 
-        c4, c5 = st.columns(2)
-        c4.metric(
-            "Custo por Viagem",
-            f"R$ {total_should_cost_calc:,.2f}".replace(",", "X")
-            .replace(".", ",")
-            .replace("X", "."),
-        )
-        c5.metric(
-            "Custo Total Mês Rota",
-            f"R$ {total_should_cost_calc*viagens_mes:,.2f}".replace(",", "X")
-            .replace(".", ",")
-            .replace("X", "."),
-        )
+          df_display = pd.DataFrame(pilares_dinamicos)
+          df_display["Participação (%)"] = df_display["%"].apply(
+              lambda x: f"{x*100:.1f}%"
+          )
+          df_display["Valor Calculado (R$)"] = df_display["Valor (R$)"].apply(
+              lambda x: f"R$ {x:,.2f}".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", ".")
+          )
 
-        st.write("---")
-        st.markdown(
-            "#### 📊 Decomposição Financeira dos 10 Pilares (Por Viagem)"
-        )
+          # KPIs DA ROTA ORGANIZADOS EM 2 LINHAS
+          c1, c2, c3 = st.columns(3)
+          c1.metric(
+              "Distância Ida e Volta", f"{km_ida_volta:,.0f} km".replace(",", ".")
+          )
+          c2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
+          c3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
 
-        st.dataframe(
-            df_display[["Pilar", "Participação (%)", "Valor Calculado (R$)"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+          st.write("")
 
-        df_chart = df_display.set_index("Pilar")[["Valor (R$)"]]
-        st.bar_chart(df_chart, color="#FF6600")
+          c4, c5 = st.columns(2)
+          c4.metric(
+              "Custo por Viagem",
+              f"R$ {total_should_cost_calc:,.2f}".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", "."),
+          )
+          c5.metric(
+              "Custo Total Mês Rota",
+              f"R$ {total_should_cost_calc*viagens_mes:,.2f}".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", "."),
+          )
+
+          st.write("---")
+          st.markdown(
+              "#### 📊 Decomposição Financeira dos 10 Pilares (Por Viagem)"
+          )
+
+          st.dataframe(
+              df_display[["Pilar", "Participação (%)", "Valor Calculado (R$)"]],
+              use_container_width=True,
+              hide_index=True,
+          )
+
+          df_chart = df_display.set_index("Pilar")[["Valor (R$)"]]
+          st.bar_chart(df_chart, color="#FF6600")
 
       else:
         st.info("Aguardando rotas da planilha...")
@@ -821,17 +865,21 @@ if not df_rotas.empty:
     st.subheader("🤖 Agente Estratégico de Fretes")
 
     resumo_rotas_abaixo = ""
-    if not df_rotas.empty and "STATUS" in df_rotas.columns:
+    if not df_rotas.empty and col_status:
       df_temp = df_rotas.copy()
       df_temp["STATUS_CLEAN"] = (
-          df_temp["STATUS"].astype(str).str.strip().str.lower()
+          df_temp[col_status].astype(str).str.strip().str.lower()
       )
       df_abaixo_real = df_temp[
           df_temp["STATUS_CLEAN"].str.contains("abaixo", na=False)
       ].copy()
 
-      if "DIF R$ ANTT" in df_abaixo_real.columns:
-        df_abaixo_real["DIF_R$_NUM"] = df_abaixo_real["DIF R$ ANTT"].apply(
+      col_dif_antt = encontrar_coluna(
+          df_abaixo_real, ["DIF R$ ANTT", "DIF ANTT", "DIF R$"]
+      )
+
+      if col_dif_antt:
+        df_abaixo_real["DIF_R$_NUM"] = df_abaixo_real[col_dif_antt].apply(
             limpar_numero_br
         )
         top_15_abaixo = df_abaixo_real.sort_values(
@@ -839,19 +887,25 @@ if not df_rotas.empty:
         ).head(15)
 
         cols_prompt = [
-            "NOME_TRANSPORTADORA",
-            "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
-            "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
-            "PERFIL_GRUPO_DE_EQUIPAMENTO",
-            "Frete Considerado",
-            "Frete Minimo",
-            "DIF R$ ANTT",
-            "DIF - %",
+            col
+            for col in df_abaixo_real.columns
+            if any(
+                k in col
+                for k in [
+                    "TRANSPORTADORA",
+                    "ORIGEM",
+                    "DESTINO",
+                    "EQUIPAMENTO",
+                    "FRETE",
+                    "ANTT",
+                    "DIF",
+                ]
+            )
         ]
-        cols_presentes = [c for c in cols_prompt if c in top_15_abaixo.columns]
-        resumo_rotas_abaixo = top_15_abaixo[cols_presentes].to_string(
-            index=False
-        )
+        if cols_prompt:
+          resumo_rotas_abaixo = top_15_abaixo[cols_prompt[:8]].to_string(
+              index=False
+          )
 
     contexto_ia_expandido = (
         contexto_ia
@@ -902,8 +956,8 @@ if not df_rotas.empty:
         st.markdown(m["content"])
 
     pergunta = st.chat_input(
-        "Ex: Monte o Should Cost detalhado da rota Itupeva x Murici com os 10"
-        " pilares e a quantidade de viagens por mês."
+        "Ex: Monte o Should Cost detalhado da rota Benevides x Uberlândia com"
+        " os 10 pilares e a quantidade de viagens por mês."
     )
     if pergunta:
       st.chat_message("user").markdown(pergunta)
