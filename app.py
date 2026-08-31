@@ -66,7 +66,7 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 
 # --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
 def encontrar_coluna(df, palavras_chave, excluir=[]):
-  """Encontra colunas no DataFrame de forma dinâmica ignorando formatações variadas."""
+  """Encontra colunas no DataFrame de forma dinâmica ignorando variações de nome."""
   if df is None or df.empty:
     return None
   for col in df.columns:
@@ -76,6 +76,67 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
     ):
       return col
   return None
+
+
+def formatar_rotas_codigo_nome(df_rotas):
+  """Cria o nome de exibição no formato [CÓDIGO - NOME ➔ CÓDIGO - NOME] para permitir busca dupla."""
+  col_cod_o = encontrar_coluna(
+      df_rotas,
+      [
+          "CODIGO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "COD_ORIGEM",
+          "CODIGO_ORIGEM",
+          "COD_O",
+          "CODIGO_ZONA_ORIGEM",
+      ],
+  )
+  col_cod_d = encontrar_coluna(
+      df_rotas,
+      [
+          "CODIGO_ZONA_DE_TRANSPORTE_DESTINO",
+          "COD_DESTINO",
+          "CODIGO_DESTINO",
+          "COD_D",
+          "CODIGO_ZONA_DESTINO",
+      ],
+  )
+
+  col_o = encontrar_coluna(
+      df_rotas,
+      ["DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM", "ORIGEM", "NOME_ORIGEM", "ORIG"],
+      excluir=["COD", "CODIGO"],
+  )
+  col_d = encontrar_coluna(
+      df_rotas,
+      ["DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO", "DESTINO", "NOME_DESTINO", "DEST"],
+      excluir=["COD", "CODIGO"],
+  )
+
+  if (
+      col_cod_o
+      and col_cod_d
+      and col_o
+      and col_d
+      and col_cod_o != col_o
+      and col_cod_d != col_d
+  ):
+    df_rotas["ROTA_NOME"] = (
+        df_rotas[col_cod_o].astype(str).str.strip()
+        + " - "
+        + df_rotas[col_o].astype(str).str.strip()
+        + " ➔ "
+        + df_rotas[col_cod_d].astype(str).str.strip()
+        + " - "
+        + df_rotas[col_d].astype(str).str.strip()
+    )
+  elif col_o and col_d:
+    df_rotas["ROTA_NOME"] = (
+        df_rotas[col_o].astype(str).str.strip()
+        + " ➔ "
+        + df_rotas[col_d].astype(str).str.strip()
+    )
+
+  return df_rotas, col_o, col_d
 
 
 def limpar_numero_br(valor):
@@ -614,22 +675,18 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA
+    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA (CÓDIGO + NOME)
     with aba_should_cost:
       st.markdown(
           "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
       )
       st.caption(
-          "Cálculo bottom-up gerado a partir do fluxo operacional, tempo de"
-          " viagem e dados FIPE da sua planilha."
+          "Pesquise a rota digitando o **código** ou o **nome da cidade**."
       )
 
-      col_o = encontrar_coluna(
-          df_rotas, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
-      )
-      col_d = encontrar_coluna(
-          df_rotas, ["DESTINO", "ZONA_DE_TRANSPORTE_DESTINO", "DEST"]
-      )
+      # Aplica a formatação [CÓDIGO - NOME ➔ CÓDIGO - NOME] para permitir busca dupla
+      df_rotas, col_o, col_d = formatar_rotas_codigo_nome(df_rotas)
+
       col_km = encontrar_coluna(
           df_rotas,
           ["DISTÂNCIA", "DISTANCIA", "KM"],
@@ -639,16 +696,11 @@ if not df_rotas.empty:
           df_rotas, ["VEÍCULO", "VEICULO", "PERFIL", "EQUIPAMENTO", "TIPO"]
       )
 
-      if col_o and col_d:
-        df_rotas["ROTA_NOME"] = (
-            df_rotas[col_o].astype(str).str.strip()
-            + " ➔ "
-            + df_rotas[col_d].astype(str).str.strip()
-        )
+      if "ROTA_NOME" in df_rotas.columns:
         lista_rotas = sorted(df_rotas["ROTA_NOME"].dropna().unique().tolist())
 
         rota_selecionada = st.selectbox(
-            "🎯 Selecione a Rota da Operação:",
+            "🎯 Selecione ou digite o Código / Nome da Rota:",
             lista_rotas,
             key="sb_should_cost_rota",
         )
