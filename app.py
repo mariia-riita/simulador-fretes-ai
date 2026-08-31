@@ -2,8 +2,8 @@ from datetime import datetime
 import json
 import time
 import google.generativeai as genai
+from google.oauth2.service_account import Credentials
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
@@ -17,7 +17,7 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('[https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap)');
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
     html, body, [data-testid="stAppViewContainer"], .stApp {
         font-family: 'Poppins', sans-serif;
@@ -58,14 +58,27 @@ st.markdown(
 
 # --- 2. CONSTANTES E CONEXÕES ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
-LINK_PLANILHA = "[https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing](https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing)"
-LINK_PLANILHA_SIMULACOES = "[https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing](https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing)"
-LINK_POWERBI_ANP = "[https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9](https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9)"
+LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
+LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
+LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. HELPER FUNCTIONS DE TRATAMENTO NUMÉRICO E BUSCA ---
+# --- 3. HELPER FUNCTIONS DE TRATAMENTO NUMÉRICO E AUTENTICAÇÃO ---
+def obter_cliente_gspread():
+  """Retorna a conexão autenticada com o Google Sheets utilizando a biblioteca moderna google-auth."""
+  escopos = [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive",
+  ]
+  cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+  credenciais = Credentials.from_service_account_info(
+      cred_dict, scopes=escopos
+  )
+  return gspread.authorize(credenciais)
+
+
 def encontrar_coluna(df, palavras_chave, excluir=[]):
   """Encontra a coluna no DataFrame priorizando a ordem das palavras-chave fornecidas."""
   if df is None or len(df.columns) == 0:
@@ -336,15 +349,7 @@ def formatar_kpi_brl(valor):
 
 def salvar_historico_ia(pergunta, resposta):
   try:
-    escopos = [
-        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
-        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
-    ]
-    cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
-        cred_dict, escopos
-    )
-    cliente = gspread.authorize(credenciais)
+    cliente = obter_cliente_gspread()
     planilha = cliente.open_by_url(LINK_PLANILHA)
 
     try:
@@ -368,16 +373,7 @@ def salvar_historico_ia(pergunta, resposta):
 
 def salvar_simulacao_sheets(linhas_validas):
   try:
-    escopos = [
-        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
-        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
-    ]
-    cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
-        cred_dict, escopos
-    )
-    cliente = gspread.authorize(credenciais)
-
+    cliente = obter_cliente_gspread()
     planilha_sim = cliente.open_by_url(LINK_PLANILHA_SIMULACOES)
     try:
       aba = planilha_sim.get_worksheet(0)
@@ -411,15 +407,7 @@ def salvar_simulacao_sheets(linhas_validas):
 
 def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
   try:
-    escopos = [
-        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
-        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
-    ]
-    cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
-        cred_dict, escopos
-    )
-    cliente = gspread.authorize(credenciais)
+    cliente = obter_cliente_gspread()
     planilha = cliente.open_by_url(LINK_PLANILHA)
 
     try:
@@ -447,15 +435,7 @@ def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
 # --- 4. CARREGAMENTO EM TEMPO REAL DAS ABAS DO GOOGLE SHEETS ---
 @st.cache_data(ttl=300)
 def ler_base_sheets():
-  escopos = [
-      "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
-      "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
-  ]
-  cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-  credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
-      cred_dict, escopos
-  )
-  cliente = gspread.authorize(credenciais)
+  cliente = obter_cliente_gspread()
   planilha = cliente.open_by_url(LINK_PLANILHA)
 
   try:
