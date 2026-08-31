@@ -583,8 +583,8 @@ if not df_rotas_bruta.empty:
 
   if col_status:
     s_status = extrair_series(df_rotas, col_status).str.upper()
-    rotas_dentro = int(len(df_rotas[s_status.str.contains("DENTRO", na=False)]))
-    rotas_abaixo = int(len(df_rotas[s_status.str.contains("ABAIXO", na=False)]))
+    rotas_dentro = int(len(df_rotas[s_status.str.contains("Dentro", na=False)]))
+    rotas_abaixo = int(len(df_rotas[s_status.str.contains("Abaixo", na=False)]))
 
   if (rotas_dentro == 0 and rotas_abaixo == 0) and not df_rotas.empty:
     col_dif_r = encontrar_coluna(
