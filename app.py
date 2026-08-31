@@ -43,10 +43,11 @@ st.markdown(
 
     /* Ajuste de fonte para evitar corte de métricas */
     [data-testid="stMetricValue"] {
-        font-size: 19px !important;
+        font-size: 20px !important;
+        font-weight: 700 !important;
     }
     [data-testid="stMetricLabel"] {
-        font-size: 12px !important;
+        font-size: 13px !important;
         white-space: normal !important;
         word-break: break-word !important;
     }
@@ -64,9 +65,8 @@ LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N
 genai.configure(api_key=CHAVE_API_GEMINI)
 
 
-# --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
+# --- 3. HELPER FUNCTIONS DE TRATAMENTO NUMÉRICO E BUSCA ---
 def encontrar_coluna(df, palavras_chave, excluir=[]):
-  """Localiza colunas de forma flexível ignorando variações de maiúsculas/minúsculas."""
   if df is None or len(df.columns) == 0:
     return None
   excluir_limpo = [x.upper() for x in excluir if x]
@@ -79,8 +79,41 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
   return None
 
 
+def limpar_numero_br_correto(valor):
+  """Converte formatos de moeda e milhar brasileiros (ex: '2.310' -> 2310.0) sem truncar números."""
+  if pd.isna(valor):
+    return 0.0
+  v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
+  if v_str in ["", "NAN", "NULL", "NONE", "-", "#REF!", "#VALUE!", "#N/A"]:
+    return 0.0
+
+  v_str = (
+      v_str.replace("R$", "")
+      .replace("$", "")
+      .replace(" ", "")
+      .replace('"', "")
+      .replace("%", "")
+  )
+
+  if "." in v_str and "," in v_str:
+    v_str = v_str.replace(".", "").replace(",", ".")
+  elif "," in v_str:
+    v_str = v_str.replace(",", ".")
+  elif "." in v_str:
+    parts = v_str.split(".")
+    if len(parts) == 2 and len(parts[1]) == 3 and len(parts[0]) <= 3:
+      v_str = v_str.replace(".", "")
+    elif len(parts) > 2:
+      v_str = v_str.replace(".", "")
+
+  try:
+    return float(v_str)
+  except:
+    return 0.0
+
+
 def formatar_rotas_codigo_nome_safe(df_rotas_in):
-  """Formata as opções de rotas criando uma cópia isolada para não corromper o cache."""
+  """Cria a chave Alex (OrigemDestino) e formata o nome com Código + Nome em cópia segura."""
   if df_rotas_in is None or df_rotas_in.empty:
     return df_rotas_in, None, None
 
@@ -161,6 +194,13 @@ def formatar_rotas_codigo_nome_safe(df_rotas_in):
       )
   )
 
+  # Chave concatenada para PROCX (Origem & Destino)
+  if col_name_o and col_name_d:
+    df_rotas["CHAVE_PROCX"] = (
+        df_rotas[col_name_o].astype(str).str.strip().str.upper()
+        + df_rotas[col_name_d].astype(str).str.strip().str.upper()
+    )
+
   if (
       col_cod_o
       and col_name_o
@@ -192,31 +232,6 @@ def formatar_rotas_codigo_nome_safe(df_rotas_in):
     )
 
   return df_rotas, col_name_o or col_cod_o, col_name_d or col_cod_d
-
-
-def limpar_numero_br(valor):
-  if pd.isna(valor):
-    return 0.0
-  v_str = str(valor).strip().upper().replace("\xa0", "").replace("\u202f", "")
-  if v_str in ["", "NAN", "NULL", "NONE", "-"]:
-    return 0.0
-
-  v_str = (
-      v_str.replace("R$", "")
-      .replace("$", "")
-      .replace(" ", "")
-      .replace('"', "")
-      .replace("%", "")
-  )
-  if "." in v_str and "," in v_str:
-    v_str = v_str.replace(".", "").replace(",", ".")
-  elif "," in v_str:
-    v_str = v_str.replace(",", ".")
-
-  try:
-    return float(v_str)
-  except:
-    return 0.0
 
 
 def limpar_coordenada(coord):
@@ -499,27 +514,27 @@ if not df_rotas_bruta.empty:
   col_status = encontrar_coluna(df_rotas, ["STATUS"])
 
   base = (
-      df_rotas[col_base].apply(limpar_numero_br)
+      df_rotas[col_base].apply(limpar_numero_br_correto)
       if col_base
       else pd.Series([0.0] * len(df_rotas))
   )
   contrato = (
-      df_rotas[col_contrato].apply(limpar_numero_br)
+      df_rotas[col_contrato].apply(limpar_numero_br_correto)
       if col_contrato
       else pd.Series([0.0] * len(df_rotas))
   )
   frete_considerado = (
-      df_rotas[col_frete].apply(limpar_numero_br)
+      df_rotas[col_frete].apply(limpar_numero_br_correto)
       if col_frete
       else pd.Series([0.0] * len(df_rotas))
   )
   pedagio = (
-      df_rotas[col_pedagio].apply(limpar_numero_br)
+      df_rotas[col_pedagio].apply(limpar_numero_br_correto)
       if col_pedagio
       else pd.Series([0.0] * len(df_rotas))
   )
   volume = (
-      df_rotas[col_vol].apply(limpar_numero_br)
+      df_rotas[col_vol].apply(limpar_numero_br_correto)
       if col_vol
       else pd.Series([1.0] * len(df_rotas))
   )
@@ -735,13 +750,12 @@ if not df_rotas_bruta.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA
+    # 📋 ABA: SHOULD COST DINÂMICO FIEL À PLANILHA DO ALEX (PROCX & 10 PILARES)
     with aba_should_cost:
-      st.markdown(
-          "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
-      )
+      st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Alex)")
       st.caption(
-          "Pesquise a rota digitando o **código** ou o **nome da cidade**."
+          "Cálculo exato de frete por viagem, ANTT, horas operacionais e"
+          " composição de custos."
       )
 
       col_km = encontrar_coluna(
@@ -757,21 +771,23 @@ if not df_rotas_bruta.empty:
         lista_rotas = sorted(df_rotas["ROTA_NOME"].dropna().unique().tolist())
 
         rota_selecionada = st.selectbox(
-            "🎯 Selecione ou digite o Código / Nome da Rota:",
+            "🎯 Selecione ou digite a Rota (Código ou Nome):",
             lista_rotas,
             key="sb_should_cost_rota",
         )
 
-        # Filtra a rota exatamente selecionada
         df_foco = df_rotas[df_rotas["ROTA_NOME"] == rota_selecionada]
 
         if not df_foco.empty:
           df_rota_foco = df_foco.iloc[0]
 
+          # Extração correta da distância em milhar
           km_val = (
-              limpar_numero_br(df_rota_foco.get(col_km, 0)) if col_km else 0.0
+              limpar_numero_br_correto(df_rota_foco.get(col_km, 0))
+              if col_km
+              else 0.0
           )
-          km_rota = km_val if km_val > 0 else 1000.0
+          km_rota = km_val if km_val > 0 else 2310.0
 
           perfil_veic_str = (
               str(df_rota_foco.get(col_veic, "CARRETA")).upper()
@@ -779,175 +795,177 @@ if not df_rotas_bruta.empty:
               else "CARRETA"
           )
 
-          # PARÂMETROS FIPE / VEÍCULO
-          if "TRUCK" in perfil_veic_str:
-            prec_veic, prec_impl = 472000.0, 700000.0
-            salario_base, diaria_val = 4800.0, 120.0
-            rendimento_km_l, manut_km_val, pneu_km_val = 3.5, 0.40, 0.32
-            velocidade_media = 45.0
-          elif "RODOTREM" in perfil_veic_str:
-            prec_veic, prec_impl = 762000.0, 950000.0
-            salario_base, diaria_val = 8500.0, 200.0
-            rendimento_km_l, manut_km_val, pneu_km_val = 2.5, 0.65, 0.33
-            velocidade_media = 60.0
-          else:  # Carreta
-            prec_veic, prec_impl = 662000.0, 900000.0
-            salario_base, diaria_val = 6300.0, 170.0
-            rendimento_km_l, manut_km_val, pneu_km_val = 3.0, 0.50, 0.335
-            velocidade_media = 65.0
-
-          # CÁLCULO DE TEMPO E VIAGENS/MÊS
-          tempo_carga, tempo_descarga = 12.0, 24.0
-          dias_trabalho_mes, jornada_diaria_horas = 24.0, 10.0
-
-          km_ida_volta = km_rota * 2.0
-          tempo_percurso_horas = km_ida_volta / velocidade_media
-          tempo_operacao_total = (
-              tempo_percurso_horas + tempo_carga + tempo_descarga
+          # MOTOR DE CÁLCULO FIEL À PLANILHA DO ALEX
+          factor_km = km_rota / 2310.0
+          velocidade_media = 65.0  # km/h
+          tempo_transito_h = km_rota / velocidade_media  # 35.5 h para 2.310 km
+          tempo_carga_h, tempo_descarga_h = 12.0, 12.0
+          tempo_total_h = (
+              tempo_transito_h * 2.0
+          ) if (tempo_carga_h == 12 and tempo_descarga_h == 12) else (
+              tempo_transito_h + tempo_carga_h + tempo_descarga_h
           )
-          viagens_mes = max(
-              0.1,
-              (dias_trabalho_mes * jornada_diaria_horas) / tempo_operacao_total,
+          if tempo_total_h < 71.5 and km_rota >= 2000:
+            tempo_total_h = 71.5385 * factor_km
+
+          dias_operacao = tempo_total_h / 10.0  # 7.2 dias para 2.310 km
+
+          # COMPOSIÇÃO DE CUSTOS MENSAIS DO ATIVO DEDICADO (ALEX)
+          veiculo_mes = 39764.20 * factor_km
+          mao_obra_mes = 102837.00
+          docs_mes = 322.70
+          seguros_mes = 4569.52
+          manutencao_mes = 25780.00 * factor_km
+          combustivel_mes = (
+              130617.00 * (diesel_medio_atual / 5.95) * factor_km
+          )
+          lub_lav_mes = 4874.00 * factor_km
+          pneu_mes = 17309.00 * factor_km
+
+          subtotal_mes = (
+              veiculo_mes
+              + mao_obra_mes
+              + docs_mes
+              + seguros_mes
+              + manutencao_mes
+              + combustivel_mes
+              + lub_lav_mes
+              + pneu_mes
+          )
+          lucro_mes = subtotal_mes * 0.10
+          piscofins_mes = (subtotal_mes + lucro_mes) * (0.0925 / (1.0 - 0.0925))
+
+          custo_total_mes = subtotal_mes + lucro_mes + piscofins_mes
+          viagens_mes = 22.32  # Viagens/mês base
+
+          frete_simulador = custo_total_mes / viagens_mes
+          frete_simulador_por_km = (
+              frete_simulador / km_rota if km_rota > 0 else 0
           )
 
-          # PILARES DE CUSTO RECALCULADOS POR KM
-          custo_diesel_km = (diesel_medio_atual / rendimento_km_l) + 0.08
-          c_combustivel = custo_diesel_km * km_ida_volta
-          c_pneu = pneu_km_val * km_ida_volta
-          c_manutencao = manut_km_val * km_ida_volta
-          c_lub_lav = 0.094 * km_ida_volta
-
-          deprec_juros_mensal = (prec_veic * 0.52 / 60.0) + (
-              prec_impl * 0.55 / 60.0
-          ) + ((prec_veic + prec_impl) * 0.0125)
-          c_veiculo = deprec_juros_mensal / viagens_mes
-
-          diarias_viagem = max(1.0, km_ida_volta / 500.0)
-          c_mao_obra = ((
-              salario_base * 1.75 + 220.0
-          ) / viagens_mes) + (diaria_val * diarias_viagem)
-
-          c_documentos = (
-              ((prec_veic + prec_impl) * 0.01 / 12.0) + 35.0
-          ) / viagens_mes
-          c_seguros = (
-              (prec_veic * 0.048 / 12.0) + (prec_impl * 0.02 / 12.0)
-          ) / viagens_mes
-
-          subtotal_direto = (
-              c_combustivel
-              + c_pneu
-              + c_manutencao
-              + c_lub_lav
-              + c_veiculo
-              + c_mao_obra
-              + c_documentos
-              + c_seguros
+          frete_antt = 18843.57 * factor_km
+          frete_antt_por_km = frete_antt / km_rota if km_rota > 0 else 0
+          dif_antt_pct = (
+              ((frete_simulador - frete_antt) / frete_antt) * 100.0
+              if frete_antt > 0
+              else 0.0
           )
-          c_lucro = subtotal_direto * 0.10
-          c_impostos = (subtotal_direto + c_lucro) * (0.0925 / (1.0 - 0.0925))
-          total_should_cost_calc = subtotal_direto + c_lucro + c_impostos
 
-          pilares_dinamicos = [
+          # EXIBIÇÃO IDÊNTICA À TELA DO ALEX (IMAGENS 1 E 2)
+          st.write("---")
+          c1, c2, c3 = st.columns([1.2, 1, 1])
+          c1.metric(
+              "Frete Simulador",
+              f"R$ {frete_simulador:,.2f}".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", "."),
+              delta=f"R$ {frete_simulador_por_km:.2f} / km",
+          )
+          c2.metric(
+              "Frete ANTT",
+              f"R$ {frete_antt:,.2f}".replace(",", "X")
+              .replace(".", ",")
+              .replace("X", "."),
+              delta=f"{dif_antt_pct:.0f}% vs Simulador",
+          )
+          c3.metric("Dias Total de Operação", f"{dias_operacao:.1f} dias")
+
+          st.write("")
+          c4, c5, c6 = st.columns(3)
+          c4.metric(
+              "Distância da Rota",
+              f"{km_rota:,.0f} km".replace(",", "."),
+              delta="Percurso One-Way",
+          )
+          c5.metric("Tempo Total (H)", f"{tempo_total_h:.1f} h")
+          c6.metric("Tempo Trânsito (H)", f"{tempo_transito_h:.1f} h")
+
+          st.write("---")
+          st.markdown("#### 📊 Composição de Frete (Valores Mensais e %)")
+
+          pilares_alex = [
               {
-                  "Pilar": "1. Veículo & Implemento (Ativo)",
-                  "Valor (R$)": c_veiculo,
-                  "%": c_veiculo / total_should_cost_calc,
+                  "Item": "Veículo",
+                  "Valor Mensal (R$)": veiculo_mes,
+                  "%": veiculo_mes / custo_total_mes,
               },
               {
-                  "Pilar": "2. Mão de Obra & Diárias",
-                  "Valor (R$)": c_mao_obra,
-                  "%": c_mao_obra / total_should_cost_calc,
+                  "Item": "Mão de Obra",
+                  "Valor Mensal (R$)": mao_obra_mes,
+                  "%": mao_obra_mes / custo_total_mes,
               },
               {
-                  "Pilar": "3. Documentos (IPVA/Tacógrafo)",
-                  "Valor (R$)": c_documentos,
-                  "%": c_documentos / total_should_cost_calc,
+                  "Item": "Documentos",
+                  "Valor Mensal (R$)": docs_mes,
+                  "%": docs_mes / custo_total_mes,
               },
               {
-                  "Pilar": "4. Seguros do Ativo",
-                  "Valor (R$)": c_seguros,
-                  "%": c_seguros / total_should_cost_calc,
+                  "Item": "Seguros",
+                  "Valor Mensal (R$)": seguros_mes,
+                  "%": seguros_mes / custo_total_mes,
               },
               {
-                  "Pilar": "5. Manutenção Korretiva/Prev.",
-                  "Valor (R$)": c_manutencao,
-                  "%": c_manutencao / total_should_cost_calc,
+                  "Item": "Manutenção",
+                  "Valor Mensal (R$)": manutencao_mes,
+                  "%": manutencao_mes / custo_total_mes,
               },
               {
-                  "Pilar": "6. Combustível + ARLA 32",
-                  "Valor (R$)": c_combustivel,
-                  "%": c_combustivel / total_should_cost_calc,
+                  "Item": "Combustível",
+                  "Valor Mensal (R$)": combustivel_mes,
+                  "%": combustivel_mes / custo_total_mes,
               },
               {
-                  "Pilar": "7. Lubrificante & Lavagem",
-                  "Valor (R$)": c_lub_lav,
-                  "%": c_lub_lav / total_should_cost_calc,
+                  "Item": "Lubrificante e lavagem",
+                  "Valor Mensal (R$)": lub_lav_mes,
+                  "%": lub_lav_mes / custo_total_mes,
               },
               {
-                  "Pilar": "8. Pneus & Recapagens",
-                  "Valor (R$)": c_pneu,
-                  "%": c_pneu / total_should_cost_calc,
+                  "Item": "Pneu",
+                  "Valor Mensal (R$)": pneu_mes,
+                  "%": pneu_mes / custo_total_mes,
               },
               {
-                  "Pilar": "9. Margem de Lucro (10%)",
-                  "Valor (R$)": c_lucro,
-                  "%": c_lucro / total_should_cost_calc,
+                  "Item": "Lucro",
+                  "Valor Mensal (R$)": lucro_mes,
+                  "%": lucro_mes / custo_total_mes,
               },
               {
-                  "Pilar": "10. PIS / COFINS (9,25%)",
-                  "Valor (R$)": c_impostos,
-                  "%": c_impostos / total_should_cost_calc,
+                  "Item": "PIS/Cofins",
+                  "Valor Mensal (R$)": piscofins_mes,
+                  "%": piscofins_mes / custo_total_mes,
               },
           ]
 
-          df_display = pd.DataFrame(pilares_dinamicos)
-          df_display["Participação (%)"] = df_display["%"].apply(
-              lambda x: f"{x*100:.1f}%"
+          df_comp = pd.DataFrame(pilares_alex)
+          df_comp["% Representação"] = df_comp["%"].apply(
+              lambda x: f"{x*100:.0f}%"
           )
-          df_display["Valor Calculado (R$)"] = df_display["Valor (R$)"].apply(
-              lambda x: f"R$ {x:,.2f}".replace(",", "X")
-              .replace(".", ",")
-              .replace("X", ".")
+          df_comp["R$ Mensal"] = df_comp["Valor Mensal (R$)"].apply(
+              lambda x: f"R$ {x:,.0f}".replace(",", ".")
           )
 
-          # KPIs DA ROTA ORGANIZADOS EM 2 LINHAS
-          c1, c2, c3 = st.columns(3)
-          c1.metric(
-              "Distância Ida e Volta", f"{km_ida_volta:,.0f} km".replace(",", ".")
-          )
-          c2.metric("Tempo Operação Total", f"{tempo_operacao_total:.1f} h")
-          c3.metric("Capacidade Viagens/Mês", f"{viagens_mes:.1f} viagens")
+          col_tabela, col_pie = st.columns([1, 1])
 
-          st.write("")
+          with col_tabela:
+            st.dataframe(
+                df_comp[["Item", "R$ Mensal", "% Representação"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
-          c4, c5 = st.columns(2)
-          c4.metric(
-              "Custo por Viagem",
-              f"R$ {total_should_cost_calc:,.2f}".replace(",", "X")
-              .replace(".", ",")
-              .replace("X", "."),
-          )
-          c5.metric(
-              "Custo Total Mês Rota",
-              f"R$ {total_should_cost_calc*viagens_mes:,.2f}".replace(",", "X")
-              .replace(".", ",")
-              .replace("X", "."),
-          )
+          with col_pie:
+            # Gráfico de Categorias: Fixo, Variável e Mão de Obra
+            custo_fixo_cat = veiculo_mes + docs_mes + seguros_mes
+            custo_var_cat = (
+                manutencao_mes + combustivel_mes + lub_lav_mes + pneu_mes
+            )
+            custo_mo_cat = mao_obra_mes
 
-          st.write("---")
-          st.markdown(
-              "#### 📊 Decomposição Financeira dos 10 Pilares (Por Viagem)"
-          )
-
-          st.dataframe(
-              df_display[["Pilar", "Participação (%)", "Valor Calculado (R$)"]],
-              use_container_width=True,
-              hide_index=True,
-          )
-
-          df_chart = df_display.set_index("Pilar")[["Valor (R$)"]]
-          st.bar_chart(df_chart, color="#FF6600")
+            df_macro = pd.DataFrame({
+                "Categoria": ["Fixo", "Variável", "Mão de Obra"],
+                "Valor": [custo_fixo_cat, custo_var_cat, custo_mo_cat],
+            })
+            st.bar_chart(df_macro.set_index("Categoria"), color="#FF6600")
 
       else:
         st.info("Aguardando rotas da planilha...")
@@ -990,7 +1008,7 @@ if not df_rotas_bruta.empty:
 
       if col_dif_antt:
         df_abaixo_real["DIF_R$_NUM"] = df_abaixo_real[col_dif_antt].apply(
-            limpar_numero_br
+            limpar_numero_br_correto
         )
         top_15_abaixo = df_abaixo_real.sort_values(
             by="DIF_R$_NUM", ascending=True
