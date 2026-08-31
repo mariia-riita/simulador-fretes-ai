@@ -529,7 +529,7 @@ if not df_rotas_bruta.empty:
         .str.upper()
     )
 
-  # Formatação e PROCX dos KMs do Google Maps de forma 100% segura
+  # Formatação e PROCX dos KMs do Google Maps
   df_rotas, col_o_global, col_d_global = preparar_rotas_com_km_maps(
       df_rotas, df_kms_bruta
   )
@@ -539,6 +539,18 @@ if not df_rotas_bruta.empty:
   col_frete = encontrar_coluna(df_rotas, ["FRETE", "CONS"])
   col_pedagio = encontrar_coluna(df_rotas, ["PEDAGIO", "PEDÁGIO"])
   col_vol = encontrar_coluna(df_rotas, ["VOL", "VOLUME"])
+
+  col_var = encontrar_coluna(
+      df_rotas,
+      [
+          "TARIFA NATURA - VARIAÇÃO 5 %",
+          "VARIAÇÃO 5 %",
+          "TARIFA NATURA - VARIAÇÃO 5%",
+          "VARIAÇÃO 5%",
+          "VARIACAO 5 %",
+      ],
+  )
+  col_val = encontrar_coluna(df_rotas, ["VALIDAÇÃO", "VALIDACAO"])
   col_status = encontrar_coluna(df_rotas, ["STATUS", "SITUACAO", "SITUAÇÃO"])
 
   base = (
@@ -577,41 +589,27 @@ if not df_rotas_bruta.empty:
   df_rotas["CUSTO_TOTAL"] = custo_principal + pedagio
   df_rotas["Custo_Total_Ponderado"] = df_rotas["CUSTO_TOTAL"] * volume
 
-  # CÁLCULO PRECISÃO DO STATUS ANTT (DENTRO / ABAIXO DA ANTT)
+  # CÁLCULO DAS MÉTRICAS SEGUNDO A REGRA OFICIAL (VARIACAO 5% & VALIDAÇÃO)
+  rotas_acima = 0
   rotas_dentro = 0
   rotas_abaixo = 0
+  rotas_nao_aplica = 0
 
-  if col_status:
-    s_status = extrair_series(df_rotas, col_status).str.upper()
-    rotas_dentro = int(len(df_rotas[s_status.str.contains("Dentro", na=False)]))
-    rotas_abaixo = int(len(df_rotas[s_status.str.contains("Abaixo", na=False)]))
+  if col_var and col_val:
+    s_var = extrair_series(df_rotas, col_var).str.upper().str.strip()
+    s_val = extrair_series(df_rotas, col_val).str.upper().str.strip()
 
-  if (rotas_dentro == 0 and rotas_abaixo == 0) and not df_rotas.empty:
+    rotas_acima = int((s_var == "ACIMA").sum())
+    rotas_dentro = int((s_var == "DENTRO").sum())
+    rotas_abaixo = int((s_var == "ABAIXO").sum())
+    rotas_nao_aplica = int(
+        (s_val.str.contains("NÃO SE APLICA") | s_val.str.contains("NAO SE APLICA")).sum()
+    )
+
+  if (rotas_acima == 0 and rotas_dentro == 0 and rotas_abaixo == 0) and not df_rotas.empty:
     col_dif_r = encontrar_coluna(
         df_rotas, ["DIF R$", "DIF R", "DIF_R$", "DIFERENCA", "DIF"]
     )
-    col_frete_nat = encontrar_coluna(
-        df_rotas,
-        [
-            "FRETE NATURA",
-            "FRETE_NATURA",
-            "CUSTO_TOTAL",
-            "FRETE CONSIDERADO",
-            "CUSTO BASE",
-            "CUSTO_BASE",
-        ],
-    )
-    col_frete_min = encontrar_coluna(
-        df_rotas,
-        [
-            "FRETE MINIMO",
-            "FRETE MÍNIMO",
-            "FRETE_MINIMO",
-            "FRETE_MÍNIMO",
-            "ANTT",
-        ],
-    )
-
     if col_dif_r:
       s_dif = extrair_series(df_rotas, col_dif_r).apply(
           limpar_numero_br_correto
@@ -627,26 +625,8 @@ if not df_rotas_bruta.empty:
       rotas_dentro = int((s_dif[s_validas] >= 0).sum())
       rotas_abaixo = int((s_dif[s_validas] < 0).sum())
 
-      df_rotas["STATUS"] = "DENTRO DA ANTT"
-      df_rotas.loc[s_validas & (s_dif < 0), "STATUS"] = "ABAIXO DA ANTT"
-      col_status = "STATUS"
-    elif col_frete_nat and col_frete_min:
-      s_nat = extrair_series(df_rotas, col_frete_nat).apply(
-          limpar_numero_br_correto
-      )
-      s_min = extrair_series(df_rotas, col_frete_min).apply(
-          limpar_numero_br_correto
-      )
-      s_validas = (s_min > 0) & (s_nat > 0)
-      rotas_dentro = int(((s_nat >= s_min) & s_validas).sum())
-      rotas_abaixo = int(((s_nat < s_min) & s_validas).sum())
-
-      df_rotas["STATUS"] = "DENTRO DA ANTT"
-      df_rotas.loc[s_validas & (s_nat < s_min), "STATUS"] = "ABAIXO DA ANTT"
-      col_status = "STATUS"
-
-  st.markdown("### 🎯 Resumo da Operação (Ponderado)")
-  col1, col2, col3, col4, col5 = st.columns(5)
+  st.markdown("### 🎯 Resumo da Operação (Métricas Gerais)")
+  col1, col2, col3 = st.columns(3)
 
   total_rotas = len(df_rotas)
   total_volume = volume.sum()
@@ -656,16 +636,14 @@ if not df_rotas_bruta.empty:
   col1.metric("Rotas Ativas", total_rotas)
   col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
   col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
-  col4.metric(
-      "🔺 Dentro da ANTT",
-      f"{rotas_dentro} rotas",
-      help="Tarifas maiores que o piso mínimo.",
-  )
-  col5.metric(
-      "🔻 Abaixo da ANTT",
-      f"{rotas_abaixo} rotas",
-      help="Tarifas abaixo do piso regulamentar por lei.",
-  )
+
+  st.write("")
+  st.markdown("#### ⚖️ Status da Tarifa Natura vs Piso Mínimo ANTT (Variação 5%)")
+  m1, m2, m3, m4 = st.columns(4)
+  m1.metric("🟢 Acima da ANTT (> +5%)", f"{rotas_acima} rotas")
+  m2.metric("🎯 Dentro da Margem (±5%)", f"{rotas_dentro} rotas")
+  m3.metric("🔻 Abaixo do Mínimo (< -5%)", f"{rotas_abaixo} rotas")
+  m4.metric("⚪ Não Aplicável (Em Branco)", f"{rotas_nao_aplica} rotas")
 
   st.divider()
 
@@ -1076,10 +1054,10 @@ if not df_rotas_bruta.empty:
     st.subheader("🤖 Agente Estratégico de Fretes")
 
     resumo_rotas_abaixo = ""
-    if not df_rotas.empty and col_status:
-      s_status_chat = extrair_series(df_rotas, col_status).str.lower()
+    if not df_rotas.empty and col_var:
+      s_var_chat = extrair_series(df_rotas, col_var).str.lower()
       df_temp = df_rotas.copy()
-      df_temp["STATUS_CLEAN"] = s_status_chat
+      df_temp["STATUS_CLEAN"] = s_var_chat
       df_abaixo_real = df_temp[
           df_temp["STATUS_CLEAN"].str.contains("abaixo", na=False)
       ].copy()
@@ -1121,9 +1099,11 @@ if not df_rotas_bruta.empty:
     contexto_ia_expandido = (
         contexto_ia
         + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela:"
-        f" {len(df_rotas)}\n- Rotas com frete DENTRO do Mínimo ANTT:"
-        f" {rotas_dentro}\n- Rotas com frete ABAIXO do Mínimo ANTT:"
-        f" {rotas_abaixo}\n\n[TABELA REAL - TOP ROTAS ABAIXO DA"
+        f" {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT (> +5%):"
+        f" {rotas_acima}\n- Rotas DENTRO da Margem (±5%):"
+        f" {rotas_dentro}\n- Rotas ABAIXO do Mínimo ANTT (< -5%):"
+        f" {rotas_abaixo}\n- Rotas NÃO APLICÁVEIS (Em Branco):"
+        f" {rotas_nao_aplica}\n\n[TABELA REAL - TOP ROTAS ABAIXO DA"
         f" ANTT]:\n{resumo_rotas_abaixo}\n"
         f"O Diesel considerado atualmente na simulação é de R$ {diesel_medio_atual:.2f}/L."
     )
