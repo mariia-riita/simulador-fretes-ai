@@ -41,7 +41,7 @@ st.markdown(
     .item-legenda { display: flex; align-items: center; gap: 6px; }
     .bola-legenda { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 
-    /* Ajuste para evitar corte de texto nos Cards de Métricas */
+    /* Ajuste de fonte para evitar corte de métricas */
     [data-testid="stMetricValue"] {
         font-size: 19px !important;
     }
@@ -66,7 +66,7 @@ genai.configure(api_key=CHAVE_API_GEMINI)
 
 # --- 3. HELPER FUNCTIONS DE TRATAMENTO ---
 def encontrar_coluna(df, palavras_chave, excluir=[]):
-  """Encontra colunas no DataFrame de forma dinâmica ignorando variações de nome."""
+  """Localiza colunas de forma flexível ignorando variações de maiúsculas/minúsculas."""
   if df is None or len(df.columns) == 0:
     return None
   excluir_limpo = [x.upper() for x in excluir if x]
@@ -79,12 +79,13 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
   return None
 
 
-def formatar_rotas_codigo_nome(df_rotas):
-  """Mapeia dinamicamente colunas de Código e Nome (SAP e padrão) e gera a string combinada."""
-  if df_rotas is None or df_rotas.empty:
-    return df_rotas, None, None
+def formatar_rotas_codigo_nome_safe(df_rotas_in):
+  """Formata as opções de rotas criando uma cópia isolada para não corromper o cache."""
+  if df_rotas_in is None or df_rotas_in.empty:
+    return df_rotas_in, None, None
 
-  # 1. Colunas de Descrição / Nome
+  df_rotas = df_rotas_in.copy()
+
   col_desc_o = encontrar_coluna(
       df_rotas,
       [
@@ -93,11 +94,8 @@ def formatar_rotas_codigo_nome(df_rotas):
           "DESCRICAO_ORIGEM",
           "DESCRICAO ORIGEM",
           "DESC_ORIGEM",
-          "DESC ORIGEM",
           "NOME_ORIGEM",
-          "NOME ORIGEM",
           "DESCRICAO_ORIG",
-          "DESC_ORIG",
       ],
       excluir=["DESTINO", "DEST"],
   )
@@ -109,16 +107,12 @@ def formatar_rotas_codigo_nome(df_rotas):
           "DESCRICAO_DESTINO",
           "DESCRICAO DESTINO",
           "DESC_DESTINO",
-          "DESC DESTINO",
           "NOME_DESTINO",
-          "NOME DESTINO",
           "DESCRICAO_DEST",
-          "DESC_DEST",
       ],
       excluir=["ORIGEM", "ORIG"],
   )
 
-  # 2. Colunas de Código
   col_cod_o = encontrar_coluna(
       df_rotas,
       [
@@ -130,7 +124,6 @@ def formatar_rotas_codigo_nome(df_rotas):
           "COD_ORIGEM",
           "CD_ORIGEM",
           "COD_O",
-          "CODIGO_O",
       ],
       excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
   )
@@ -145,12 +138,10 @@ def formatar_rotas_codigo_nome(df_rotas):
           "COD_DESTINO",
           "CD_DESTINO",
           "COD_D",
-          "CODIGO_D",
       ],
       excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
   )
 
-  # Fallbacks para nomes de colunas simples ("ORIGEM", "DESTINO")
   col_name_o = (
       col_desc_o
       if col_desc_o
@@ -169,19 +160,6 @@ def formatar_rotas_codigo_nome(df_rotas):
           excluir=["ORIGEM", "ORIG", "CODIGO", "COD", "CD", col_cod_d],
       )
   )
-
-  if not col_cod_o and col_name_o != "ORIGEM":
-    col_cod_o = encontrar_coluna(
-        df_rotas,
-        ["CODIGO", "COD", "CD"],
-        excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
-    )
-  if not col_cod_d and col_name_d != "DESTINO":
-    col_cod_d = encontrar_coluna(
-        df_rotas,
-        ["CODIGO", "COD", "CD"],
-        excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
-    )
 
   if (
       col_cod_o
@@ -358,7 +336,6 @@ def salvar_simulacao_sheets(linhas_validas):
 
 
 def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
-  """Grava o Diesel e os resultados calculados de volta no Google Sheets."""
   try:
     escopos = [
         "https://spreadsheets.google.com/feeds",
@@ -458,12 +435,13 @@ with st.sidebar:
 
 try:
   dados = ler_base_sheets()
-  contexto_ia, df_rotas = dados["contexto"], dados["tabela"]
+  contexto_ia = dados["contexto"]
+  df_rotas_bruta = dados["tabela"].copy()
   df_param_custos = dados["param_custos"]
   df_fipe = dados["fipe"]
 except Exception as e:
   st.error(f"Erro ao conectar com o Google Sheets: {e}")
-  df_rotas = pd.DataFrame()
+  df_rotas_bruta = pd.DataFrame()
   df_param_custos = pd.DataFrame()
   df_fipe = pd.DataFrame()
 
@@ -494,11 +472,12 @@ with st.sidebar:
   st.header("🔄 Gravação em Nuvem")
   if st.button("💾 Gravar Novos Custos no Google Sheets"):
     with st.spinner("Atualizando planilha oficial online..."):
-      if sincronizar_sheets_auto(diesel_medio_atual, df_rotas):
+      if sincronizar_sheets_auto(diesel_medio_atual, df_rotas_bruta):
         st.success("Planilha no Google Sheets gravada com sucesso!")
         st.cache_data.clear()
 
-if not df_rotas.empty:
+if not df_rotas_bruta.empty:
+  df_rotas = df_rotas_bruta.copy()
   df_rotas.columns = (
       df_rotas.columns.astype(str)
       .str.replace("\n", "")
@@ -507,10 +486,11 @@ if not df_rotas.empty:
       .str.upper()
   )
 
-  # Formatação global de rotas com Código + Nome
-  df_rotas, col_o_global, col_d_global = formatar_rotas_codigo_nome(df_rotas)
+  # Formatação global de rotas com Código + Nome em cópia segura
+  df_rotas, col_o_global, col_d_global = formatar_rotas_codigo_nome_safe(
+      df_rotas
+  )
 
-  # Localização dinâmica de colunas principais
   col_base = encontrar_coluna(df_rotas, ["CUSTO", "BASE"])
   col_contrato = encontrar_coluna(df_rotas, ["CONTRATO"])
   col_frete = encontrar_coluna(df_rotas, ["FRETE", "CONS"])
@@ -755,7 +735,7 @@ if not df_rotas.empty:
       else:
         st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA (CÓDIGO + NOME)
+    # 📋 ABA: SHOULD COST DINÂMICO RECALCULADO POR ROTA
     with aba_should_cost:
       st.markdown(
           "### 📋 Simulador do Should Cost (Com Viagens e FIPE Dinâmica)"
@@ -782,6 +762,7 @@ if not df_rotas.empty:
             key="sb_should_cost_rota",
         )
 
+        # Filtra a rota exatamente selecionada
         df_foco = df_rotas[df_rotas["ROTA_NOME"] == rota_selecionada]
 
         if not df_foco.empty:
