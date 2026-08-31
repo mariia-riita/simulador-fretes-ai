@@ -69,36 +69,68 @@ def encontrar_coluna(df, palavras_chave, excluir=[]):
   """Encontra colunas no DataFrame de forma dinâmica ignorando variações de nome."""
   if df is None or len(df.columns) == 0:
     return None
+  excluir_limpo = [x.upper() for x in excluir if x]
   for col in df.columns:
-    col_str = str(col).upper().strip().replace("\n", " ").replace("\r", " ")
-    if any(kw.upper() in col_str for kw in palavras_chave) and not any(
-        ex.upper() in col_str for ex in excluir
+    col_clean = str(col).upper().strip().replace("\n", " ").replace("\r", " ")
+    if any(kw.upper() in col_clean for kw in palavras_chave) and not any(
+        ex in col_clean for ex in excluir_limpo
     ):
       return col
   return None
 
 
 def formatar_rotas_codigo_nome(df_rotas):
-  """Cria o nome de exibição no formato [CÓDIGO - NOME ➔ CÓDIGO - NOME] para busca dupla."""
+  """Mapeia dinamicamente colunas de Código e Nome (SAP e padrão) e gera a string combinada."""
   if df_rotas is None or df_rotas.empty:
     return df_rotas, None, None
 
-  # Busca colunas de Código
+  # 1. Colunas de Descrição / Nome
+  col_desc_o = encontrar_coluna(
+      df_rotas,
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "DESCRICAO ZONA DE TRANSPORTE ORIGEM",
+          "DESCRICAO_ORIGEM",
+          "DESCRICAO ORIGEM",
+          "DESC_ORIGEM",
+          "DESC ORIGEM",
+          "NOME_ORIGEM",
+          "NOME ORIGEM",
+          "DESCRICAO_ORIG",
+          "DESC_ORIG",
+      ],
+      excluir=["DESTINO", "DEST"],
+  )
+  col_desc_d = encontrar_coluna(
+      df_rotas,
+      [
+          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
+          "DESCRICAO ZONA DE TRANSPORTE DESTINO",
+          "DESCRICAO_DESTINO",
+          "DESCRICAO DESTINO",
+          "DESC_DESTINO",
+          "DESC DESTINO",
+          "NOME_DESTINO",
+          "NOME DESTINO",
+          "DESCRICAO_DEST",
+          "DESC_DEST",
+      ],
+      excluir=["ORIGEM", "ORIG"],
+  )
+
+  # 2. Colunas de Código
   col_cod_o = encontrar_coluna(
       df_rotas,
       [
           "CODIGO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "CODIGO ZONA DE TRANSPORTE ORIGEM",
+          "ZONA_DE_TRANSPORTE_ORIGEM",
+          "ZONA DE TRANSPORTE ORIGEM",
           "CODIGO_ORIGEM",
           "COD_ORIGEM",
           "CD_ORIGEM",
           "COD_O",
           "CODIGO_O",
-          "ZONA_ORIGEM_COD",
-          "ORIGEM_COD",
-          "CODIGO ZONA",
-          "COD ORIGEM",
-          "CODIGO",
-          "COD",
       ],
       excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
   )
@@ -106,99 +138,82 @@ def formatar_rotas_codigo_nome(df_rotas):
       df_rotas,
       [
           "CODIGO_ZONA_DE_TRANSPORTE_DESTINO",
+          "CODIGO ZONA DE TRANSPORTE DESTINO",
+          "ZONA_DE_TRANSPORTE_DESTINO",
+          "ZONA DE TRANSPORTE DESTINO",
           "CODIGO_DESTINO",
           "COD_DESTINO",
           "CD_DESTINO",
           "COD_D",
           "CODIGO_D",
-          "ZONA_DESTINO_COD",
-          "DESTINO_COD",
-          "COD DESTINO",
-          "CODIGO",
-          "COD",
       ],
       excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
   )
 
-  # Busca colunas de Nome / Descrição
-  col_o = encontrar_coluna(
-      df_rotas,
-      [
-          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
-          "DESCRICAO_ORIGEM",
-          "DESC_ORIGEM",
-          "NOME_ORIGEM",
-          "DESCRICAO_ZONA_ORIGEM",
-          "DESC_ZONA_ORIGEM",
-          "ORIGEM",
-          "NOME_O",
-          "ORIG",
-      ],
-      excluir=["DESTINO", "DEST", "CODIGO", "COD", "CD"],
+  # Fallbacks para nomes de colunas simples ("ORIGEM", "DESTINO")
+  col_name_o = (
+      col_desc_o
+      if col_desc_o
+      else encontrar_coluna(
+          df_rotas,
+          ["ORIGEM", "ORIG"],
+          excluir=["DESTINO", "DEST", "CODIGO", "COD", "CD", col_cod_o],
+      )
   )
-  col_d = encontrar_coluna(
-      df_rotas,
-      [
-          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
-          "DESCRICAO_DESTINO",
-          "DESC_DESTINO",
-          "NOME_DESTINO",
-          "DESCRICAO_ZONA_DESTINO",
-          "DESC_ZONA_DESTINO",
-          "DESTINO",
-          "NOME_D",
-          "DEST",
-      ],
-      excluir=["ORIGEM", "ORIG", "CODIGO", "COD", "CD"],
+  col_name_d = (
+      col_desc_d
+      if col_desc_d
+      else encontrar_coluna(
+          df_rotas,
+          ["DESTINO", "DEST"],
+          excluir=["ORIGEM", "ORIG", "CODIGO", "COD", "CD", col_cod_d],
+      )
   )
 
-  if not col_o:
-    col_o = encontrar_coluna(
-        df_rotas, ["ORIGEM", "ORIG"], excluir=["DESTINO", "DEST"]
+  if not col_cod_o and col_name_o != "ORIGEM":
+    col_cod_o = encontrar_coluna(
+        df_rotas,
+        ["CODIGO", "COD", "CD"],
+        excluir=["DESTINO", "DEST", "DESCRICAO", "DESC", "NOME"],
     )
-  if not col_d:
-    col_d = encontrar_coluna(
-        df_rotas, ["DESTINO", "DEST"], excluir=["ORIGEM", "ORIG"]
+  if not col_cod_d and col_name_d != "DESTINO":
+    col_cod_d = encontrar_coluna(
+        df_rotas,
+        ["CODIGO", "COD", "CD"],
+        excluir=["ORIGEM", "ORIG", "DESCRICAO", "DESC", "NOME"],
     )
 
   if (
       col_cod_o
+      and col_name_o
       and col_cod_d
-      and col_o
-      and col_d
-      and col_cod_o != col_o
-      and col_cod_d != col_d
+      and col_name_d
+      and col_cod_o != col_name_o
+      and col_cod_d != col_name_d
   ):
     df_rotas["ROTA_NOME"] = (
-        df_rotas[col_cod_o]
-        .astype(str)
-        .str.strip()
-        .replace("nan", "")
-        .replace("None", "")
+        df_rotas[col_cod_o].astype(str).str.strip()
         + " - "
-        + df_rotas[col_o].astype(str).str.strip()
+        + df_rotas[col_name_o].astype(str).str.strip()
         + " ➔ "
-        + df_rotas[col_cod_d]
-        .astype(str)
-        .str.strip()
-        .replace("nan", "")
-        .replace("None", "")
+        + df_rotas[col_cod_d].astype(str).str.strip()
         + " - "
-        + df_rotas[col_d].astype(str).str.strip()
+        + df_rotas[col_name_d].astype(str).str.strip()
     )
+  elif col_name_o and col_name_d:
     df_rotas["ROTA_NOME"] = (
-        df_rotas["ROTA_NOME"]
-        .str.replace("^ - ", "", regex=True)
-        .str.replace(" ➔  - ", " ➔ ", regex=False)
-    )
-  elif col_o and col_d:
-    df_rotas["ROTA_NOME"] = (
-        df_rotas[col_o].astype(str).str.strip()
+        df_rotas[col_name_o].astype(str).str.strip()
         + " ➔ "
-        + df_rotas[col_d].astype(str).str.strip()
+        + df_rotas[col_name_d].astype(str).str.strip()
+    )
+  elif col_cod_o and col_cod_d:
+    df_rotas["ROTA_NOME"] = (
+        df_rotas[col_cod_o].astype(str).str.strip()
+        + " ➔ "
+        + df_rotas[col_cod_d].astype(str).str.strip()
     )
 
-  return df_rotas, col_o, col_d
+  return df_rotas, col_name_o or col_cod_o, col_name_d or col_cod_d
 
 
 def limpar_numero_br(valor):
@@ -602,7 +617,7 @@ if not df_rotas.empty:
     with aba_barras:
       st.markdown("### 📊 Custo por CD de Origem")
       col_origem = col_o_global or encontrar_coluna(
-          df_rotas, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
+          df_rotas, ["DESCRICAO", "NOME", "ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM"]
       )
 
       if col_origem:
@@ -658,7 +673,7 @@ if not df_rotas.empty:
 
         if not df_mapa.empty:
           col_origem_nome = col_o_global or encontrar_coluna(
-              df_mapa, ["ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM", "ORIG"]
+              df_mapa, ["DESCRICAO", "NOME", "ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM"]
           )
           if col_origem_nome:
             contagem_origem = (
@@ -1046,7 +1061,7 @@ if not df_rotas.empty:
         7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens do veículo
         8. PNEU: Desgaste e durabilidade de pneus novos (Dianteiro/Traseiro) + Recapagens
         9. LUCRO: Margem de Lucro do Transportador (10%)
-        10. PIS / COFINS: Impostos incidentes sobre el frete (9,25%)
+        10. PIS / COFINS: Impostos incidentes sobre o frete (9,25%)
 
         === REGRAS DE APRESENTAÇÃO ===
         - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
