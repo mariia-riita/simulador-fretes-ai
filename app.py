@@ -17,7 +17,7 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+    @import url('[https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap)');
 
     html, body, [data-testid="stAppViewContainer"], .stApp {
         font-family: 'Poppins', sans-serif;
@@ -58,9 +58,9 @@ st.markdown(
 
 # --- 2. CONSTANTES E CONEXÕES ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
-LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
-LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
-LINK_POWERBI_ANP = "https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9"
+LINK_PLANILHA = "[https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing](https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing)"
+LINK_PLANILHA_SIMULACOES = "[https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing](https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing)"
+LINK_POWERBI_ANP = "[https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9](https://app.powerbi.com/view?r=eyJrIjoiMGM0NDhhMTUtMjQwZi00N2RlLTk1M2UtYjkxZTlkNzM1YzE5IiwidCI6IjQ0OTlmNGZmLTI0YTYtNGI0Mi1iN2VmLTEyNGFmY2FkYzkxMyJ9)"
 
 genai.configure(api_key=CHAVE_API_GEMINI)
 
@@ -90,6 +90,58 @@ def extrair_series(df, col_name):
   if isinstance(val, pd.DataFrame):
     val = val.iloc[:, 0]
   return val.fillna("").astype(str).str.strip()
+
+
+def remover_duplicatas_rotas(df_rotas):
+  """Desconsidera rotas duplicadas com mesmo Transportador, Origem, Destino e Tipologia."""
+  if df_rotas is None or df_rotas.empty:
+    return df_rotas
+
+  df_copy = df_rotas.copy()
+
+  col_transp = encontrar_coluna(
+      df_copy,
+      ["NOME_TRANSPORTADORA", "TRANSPORTADORA", "COD_TRANSPORTADORA", "CARRIER"],
+  )
+  col_orig = encontrar_coluna(
+      df_copy,
+      [
+          "ZONA_DE_TRANSPORTE_ORIGEM",
+          "DESCRICAO_ZONA_DE_TRANSPORTE_ORIGEM",
+          "ORIGEM",
+      ],
+  )
+  col_dest = encontrar_coluna(
+      df_copy,
+      [
+          "ZONA_DE_TRANSPORTE_DESTINO",
+          "DESCRICAO_ZONA_DE_TRANSPORTE_DESTINO",
+          "DESTINO",
+      ],
+  )
+  col_eq = encontrar_coluna(
+      df_copy,
+      [
+          "PERFIL_GRUPO_DE_EQUIPAMENTO",
+          "DESCRICAO_GRUPO_DE_EQUIPAMENTO",
+          "EQUIPAMENTO",
+          "TIPOLOGIA",
+          "PERFIL",
+      ],
+  )
+
+  cols_dedup = [
+      c
+      for c in [col_transp, col_orig, col_dest, col_eq]
+      if c and c in df_copy.columns
+  ]
+
+  if cols_dedup:
+    df_copy = df_copy.drop_duplicates(subset=cols_dedup, keep="first").reset_index(
+        drop=True
+    )
+
+  return df_copy
 
 
 def limpar_numero_br_correto(valor):
@@ -285,8 +337,8 @@ def formatar_kpi_brl(valor):
 def salvar_historico_ia(pergunta, resposta):
   try:
     escopos = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
+        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
+        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
     ]
     cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
     credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -317,8 +369,8 @@ def salvar_historico_ia(pergunta, resposta):
 def salvar_simulacao_sheets(linhas_validas):
   try:
     escopos = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
+        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
+        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
     ]
     cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
     credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -360,8 +412,8 @@ def salvar_simulacao_sheets(linhas_validas):
 def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
   try:
     escopos = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
+        "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
+        "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
     ]
     cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
     credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -396,8 +448,8 @@ def sincronizar_sheets_auto(diesel_preco, df_rotas_calculadas):
 @st.cache_data(ttl=300)
 def ler_base_sheets():
   escopos = [
-      "https://spreadsheets.google.com/feeds",
-      "https://www.googleapis.com/auth/drive",
+      "[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)",
+      "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)",
   ]
   cred_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
   credenciais = ServiceAccountCredentials.from_json_keyfile_dict(
@@ -520,6 +572,9 @@ if not df_rotas_bruta.empty:
       .str.upper()
   )
 
+  # Desconsidera duplicatas por Transportador, Origem, Destino e Tipologia
+  df_rotas = remover_duplicatas_rotas(df_rotas)
+
   if not df_kms_bruta.empty:
     df_kms_bruta.columns = (
         df_kms_bruta.columns.astype(str)
@@ -548,6 +603,8 @@ if not df_rotas_bruta.empty:
           "TARIFA NATURA - VARIAÇÃO 5%",
           "VARIAÇÃO 5%",
           "VARIACAO 5 %",
+          "VARIAÇÃO",
+          "VARIACAO",
       ],
   )
   col_val = encontrar_coluna(df_rotas, ["VALIDAÇÃO", "VALIDACAO"])
@@ -633,7 +690,7 @@ if not df_rotas_bruta.empty:
   df_fretes_reais = df_rotas[df_rotas["Custo_Total_Ponderado"] < 50000000]
   total_fretes = df_fretes_reais["Custo_Total_Ponderado"].sum()
 
-  col1.metric("Rotas Ativas", total_rotas)
+  col1.metric("Rotas Ativas (Únicas)", total_rotas)
   col2.metric("Volume Operado", f"{total_volume:,.0f}".replace(",", "."))
   col3.metric("Despesa Estimada", formatar_kpi_brl(total_fretes))
 
@@ -1098,7 +1155,7 @@ if not df_rotas_bruta.empty:
 
     contexto_ia_expandido = (
         contexto_ia
-        + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas na Tabela:"
+        + f"\n\n[MÉTRICAS DA OPERAÇÃO REAL NATURA]:\n- Total de Rotas Únicas:"
         f" {len(df_rotas)}\n- Rotas com frete ACIMA do Mínimo ANTT (> +5%):"
         f" {rotas_acima}\n- Rotas DENTRO da Margem (±5%):"
         f" {rotas_dentro}\n- Rotas ABAIXO do Mínimo ANTT (< -5%):"
