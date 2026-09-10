@@ -916,7 +916,7 @@ if not df_rotas_bruta.empty:
           seguros_mes = 4569.52
           manutencao_mes = 25780.00 * factor_km
           combustivel_mes = (
-              130617.00 * (diesel_medio_atual / 5.95) * factor_km
+              130617.00 * (diesel_medio_atual / 6.88) * factor_km
           )
           lub_lav_mes = 4874.00 * factor_km
           pneu_mes = 17309.00 * factor_km
