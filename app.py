@@ -516,7 +516,7 @@ with st.sidebar:
   st.write("---")
   st.header("⛽ Radar do Diesel S10")
 
-  diesel_medio_base = 5.95
+  diesel_medio_base = 6.88
   diesel_medio_atual = st.number_input(
       "Preço Médio Nacional (R$/L):",
       min_value=4.00,
