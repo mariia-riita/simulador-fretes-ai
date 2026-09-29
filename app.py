@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA E ESTILOS CUSTOMIZADOS ---
 st.set_page_config(
-    page_title="Should Cost IA - Natura", page_icon="🚛", layout="wide"
+    page_title="Inteligência de Fretes - Natura", page_icon="🚛", layout="wide"
 )
 
 st.markdown(
@@ -486,7 +486,7 @@ def ler_base_sheets():
 
 
 # --- 5. INTERFACE DO USUÁRIO ---
-st.title("🚛 Inteligência de Fretes - Natura")
+st.title("🚛 Inteligência de Fretes - FTL")
 
 with st.sidebar:
   st.header("⚙️ Controle")
