@@ -1142,7 +1142,6 @@ if not df_rotas_bruta.empty:
         f" {rotas_abaixo}\n- Rotas NÃO APLICÁVEIS (Em Branco):"
         f" {rotas_nao_aplica}\n\n[TABELA REAL - TOP ROTAS ABAIXO DA"
         f" ANTT]:\n{resumo_rotas_abaixo}\n"
-        f"O Diesel considerado atualmente na simulação é de R$ {diesel_medio_atual:.2f}/L."
     )
 
     instrucao = f"""Você é um Engenheiro de Logística Sênior e Especialista em Should Cost da Natura.
@@ -1156,7 +1155,7 @@ if not df_rotas_bruta.empty:
         3. DOCUMENTOS: IPVA + Licenciamento + Tacógrafo
         4. SEGUROS: Seguro do Veículo + Seguro do Implemento
         5. MANUTENÇÃO: Custo de manutenção preventiva/corretiva por Km rodado
-        6. COMBUSTÍVEL: Consumo de Diesel S10 (considerando R$ {diesel_medio_atual:.2f}/L) + ARLA 32
+        6. COMBUSTÍVEL: Consumo de Diesel S10 + ARLA 32
         7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens do veículo
         8. PNEU: Desgaste e durabilidade de pneus novos (Dianteiro/Traseiro) + Recapagens
         9. LUCRO: Margem de Lucro do Transportador (10%)
@@ -1194,7 +1193,16 @@ if not df_rotas_bruta.empty:
       with st.chat_message("assistant"):
         try:
           with st.spinner("Analisando componentes de custo e mercado..."):
-            res = st.session_state.chat.send_message(pergunta).text
+            # Enriquecimento dinamico com o valor atualizado do diesel na sidebar
+            prompt_enriquecido = f"""
+            [INFORMAÇÃO DO SISTEMA EM TEMPO REAL]:
+            - Preço atual do Diesel S10 ajustado pelo usuário na interface: R$ {diesel_medio_atual:.2f}/L.
+            Utilize OBRIGATORIAMENTE este preço de R$ {diesel_medio_atual:.2f}/L para quaisquer cálculos de combustível, Should Cost ou simulações solicitadas abaixo.
+
+            Pergunta do Usuário: {pergunta}
+            """
+            res = st.session_state.chat.send_message(prompt_enriquecido).text
+
           st.markdown(res)
           st.session_state.msgs.append({"role": "assistant", "content": res})
           salvar_historico_ia(pergunta, res)
