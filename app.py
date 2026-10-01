@@ -264,6 +264,27 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
     s_uf_o = extrair_series(df_rotas, col_uf_o)
     s_uf_d = extrair_series(df_rotas, col_uf_d)
 
+    # Identifica a coluna de Tipo de Operação / Tipologia
+    col_tipo_op = encontrar_coluna(
+        df_rotas,
+        [
+            "TIPO_DE_OPERACAO",
+            "TIPO_OPERACAO",
+            "TIPO DE OPERACAO",
+            "TIPO DE OPERAÇÃO",
+            "TIPOLOGIA",
+            "TIPO_OPERACIONAL",
+            "FLUXO",
+            "TIPO_SERVICO",
+            "TIPO DE ROTA",
+            "TIPO_ROTA",
+            "MODAL",
+            "TIPO",
+        ],
+        excluir=["JORNADA", "VEICULO", "EQUIPAMENTO", "GRUPO"],
+    )
+    s_tipo_op = extrair_series(df_rotas, col_tipo_op).str.upper() if col_tipo_op else pd.Series("", index=df_rotas.index)
+
     # PROCX com De_Para_KMs
     if df_kms_in is not None and not df_kms_in.empty:
         df_kms = df_kms_in.copy()
@@ -289,7 +310,7 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
             )
             df_rotas["KM_GOOGLE_MAPS"] = df_rotas["CHAVE_LOOKUP"].map(km_dict)
 
-    # Construção segura do nome da rota no seletor
+    # Construção segura do nome da rota no seletor com indicação de Tipologia
     origem_str = (
         ("[" + s_cod_o + "] ").where(s_cod_o != "", "")
         + s_o
@@ -300,8 +321,9 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
         + s_d
         + (" - " + s_uf_d).where(s_uf_d != "", "")
     )
+    tipo_str = (" (" + s_tipo_op + ")").where(s_tipo_op != "", "")
 
-    df_rotas["ROTA_NOME"] = origem_str + " ➔ " + destino_str
+    df_rotas["ROTA_NOME"] = origem_str + " ➔ " + destino_str + tipo_str
 
     return df_rotas, col_o, col_d
 
@@ -734,7 +756,7 @@ if not df_rotas_bruta.empty:
                         color="#FF6600",
                     )
                 else:
-                    st.warning("⚠️️ Os valores calculados vieram zerados.")
+                    st.warning("⚠️ Os valores calculados vieram zerados.")
             else:
                 st.error("🚨 Coluna de Origem não encontrada!")
 
@@ -847,11 +869,11 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-        # 📋 ABA: SHOULD COST DINÂMICO (LEITURA EXATA DO FRETE MÍNIMO ANTT DA COLUNA AV / ROTAS_ATIVAS)
+        # 📋 ABA: SHOULD COST DINÂMICO (SUPORTE COMPLETO A TIPOLOGIA: DIRETA, CONSOLIDADA E REDESPACHO)
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost, Frete Natura Atual, ANTT da Coluna AV e tempo operacional."
+                "Cálculo exato dos 10 Pilares do Should Cost, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura, ANTT (Col AV) e tempo operacional."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
@@ -869,7 +891,57 @@ if not df_rotas_bruta.empty:
                 if not df_foco.empty:
                     df_rota_foco = df_foco.iloc[0]
 
-                    # 1. DISTÂNCIA REAL DA ROTA (km)
+                    # 1. IDENTIFICAÇÃO DO TIPO DE OPERAÇÃO / TIPOLOGIA (DIRETA, CONSOLIDADA, REDESPACHO)
+                    tipo_op_val = "DIRETA"
+                    col_tipologia_found = encontrar_coluna(
+                        df_rotas,
+                        [
+                            "TIPO_DE_OPERACAO",
+                            "TIPO_OPERACAO",
+                            "TIPO DE OPERACAO",
+                            "TIPO DE OPERAÇÃO",
+                            "TIPOLOGIA",
+                            "TIPO_OPERACIONAL",
+                            "FLUXO",
+                            "TIPO_SERVICO",
+                            "TIPO DE ROTA",
+                            "TIPO_ROTA",
+                            "MODAL",
+                            "TIPO",
+                        ],
+                        excluir=["JORNADA", "VEICULO", "EQUIPAMENTO", "GRUPO", "CARGA", "DESCARGA"],
+                    )
+
+                    if col_tipologia_found and col_tipologia_found in df_rota_foco.index:
+                        v_t = str(df_rota_foco.get(col_tipologia_found, "")).upper().strip()
+                        if v_t not in ["", "NAN", "NONE", "NULL", "-"]:
+                            tipo_op_val = v_t
+
+                    # Varredura completa nas chaves da linha caso a coluna não seja por cabeçalho
+                    if tipo_op_val == "DIRETA":
+                        for k_op in df_rota_foco.index:
+                            k_clean = str(k_op).upper().strip().replace("\n", " ").replace("\r", " ")
+                            if any(kw in k_clean for kw in ["TIPO DE OPERA", "TIPOLOGIA", "FLUXO", "TIPO_OPERACAO", "MODAL"]):
+                                val_op = str(df_rota_foco[k_op]).upper().strip()
+                                if val_op not in ["", "NAN", "NONE", "NULL", "-"]:
+                                    tipo_op_val = val_op
+                                    break
+
+                    # Formatador visual com badge
+                    if "CONSOLID" in tipo_op_val or "HUB" in tipo_op_val:
+                        tipo_op_display = "📦 Consolidada (Transferência / HUB)"
+                        tipo_op_tag = "CONSOLIDADA"
+                        buffer_tempo_op = 4.0  # +4h para manuseio/consolidação
+                    elif "REDESPACHO" in tipo_op_val or "MILK" in tipo_op_val or "FRACION" in tipo_op_val:
+                        tipo_op_display = "🔄 Redespacho (Milk Run / Distribuição)"
+                        tipo_op_tag = "REDESPACHO"
+                        buffer_tempo_op = 6.0  # +6h para transbordo/redespacho local
+                    else:
+                        tipo_op_display = "🎯 Direta (Ponto a Ponto)"
+                        tipo_op_tag = "DIRETA"
+                        buffer_tempo_op = 0.0
+
+                    # 2. DISTÂNCIA REAL DA ROTA (km)
                     km_maps = df_rota_foco.get("KM_GOOGLE_MAPS", None)
                     if pd.notna(km_maps) and isinstance(km_maps, (int, float)) and km_maps > 0:
                         km_rota = float(km_maps)
@@ -883,7 +955,7 @@ if not df_rotas_bruta.empty:
                                     break
                         km_rota = km_val if km_val > 0 else 70.0
 
-                    # 2. PERFIL DO VEÍCULO
+                    # 3. PERFIL DO VEÍCULO
                     perfil_veic_str = "CARRETA"
                     for col_p in ["PERFIL_GRUPO_DE_EQUIPAMENTO", "EQUIPAMENTO", "TIPOLOGIA", "PERFIL", "VEÍCULO", "VEICULO"]:
                         if col_p in df_rota_foco.index and pd.notna(df_rota_foco[col_p]):
@@ -895,7 +967,7 @@ if not df_rotas_bruta.empty:
                                 perfil_veic_str = "RODOTREM"
                                 break
 
-                    # 3. FRETE NATURA ATUAL NA PLANILHA
+                    # 4. FRETE NATURA ATUAL NA PLANILHA
                     frete_natura_atual = 0.0
                     for col_nat in ["CUSTO_TOTAL", "TARIFA NATURA", "CONTRATO", "BASE", "FRETE", "CONS"]:
                         if col_nat in df_rota_foco.index and pd.notna(df_rota_foco[col_nat]):
@@ -904,7 +976,7 @@ if not df_rotas_bruta.empty:
                                 frete_natura_atual = v_nat
                                 break
 
-                    # 4. FRETE MÍNIMO ANTT - BUSCA DIRETA DA COLUNA AV / 'FRETE MINIMO' EM ROTAS_ATIVAS
+                    # 5. FRETE MÍNIMO ANTT - BUSCA DIRETA DA COLUNA AV / 'FRETE MINIMO' EM ROTAS_ATIVAS
                     frete_antt = 0.0
 
                     col_antt_found = encontrar_coluna(
@@ -949,7 +1021,7 @@ if not df_rotas_bruta.empty:
 
                     frete_antt_por_km = frete_antt / km_rota if km_rota > 0 else 0
 
-                    # 5. TEMPOS OPERACIONAIS ADEQUADOS À DISTÂNCIA
+                    # 6. TEMPOS OPERACIONAIS ADEQUADOS À DISTÂNCIA E TIPOLOGIA
                     t_c_raw = limpar_numero_br_correto(df_rota_foco.get("TEMPO CARGA", 0))
                     t_d_raw = limpar_numero_br_correto(df_rota_foco.get("TEMPO DESCARGA", 0))
 
@@ -965,7 +1037,7 @@ if not df_rotas_bruta.empty:
 
                     velocidade = 50.0 if km_rota < 200 else (60.0 if km_rota < 800 else 65.0)
                     tempo_transito_h = km_rota / velocidade
-                    tempo_operacao_total_h = tempo_transito_h + tempo_carga_h + tempo_descarga_h
+                    tempo_operacao_total_h = tempo_transito_h + tempo_carga_h + tempo_descarga_h + buffer_tempo_op
                     dias_operacao = tempo_operacao_total_h / 10.0
 
                     v_mes_raw = limpar_numero_br_correto(df_rota_foco.get("VIAGENS MÊS", df_rota_foco.get("VIAGENS", 0)))
@@ -976,7 +1048,7 @@ if not df_rotas_bruta.empty:
 
                     km_rodado_mensal = km_rota * viagens_mes
 
-                    # 6. PARÂMETROS DO ATIVO
+                    # 7. PARÂMETROS DO ATIVO
                     if perfil_veic_str == "TRUCK":
                         preco_v, res_v, mes_v = 472000.0, 0.48, 72.0
                         preco_i, res_i, mes_i = 700000.0, 0.45, 60.0
@@ -1056,24 +1128,28 @@ if not df_rotas_bruta.empty:
                     c1, c2, c3, c4 = st.columns(4)
                     
                     c1.metric(
+                        "Tipo de Operação",
+                        tipo_op_display,
+                        delta=f"Perfil {perfil_veic_str}",
+                    )
+                    c2.metric(
                         "Frete Mínimo ANTT (Coluna AV)",
                         f"R$ {frete_antt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                         delta=f"R$ {frete_antt_por_km:.2f} / km",
                     )
-                    c2.metric(
+                    c3.metric(
                         "Frete Natura (Atual)",
                         f"R$ {frete_natura_atual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                         delta="Tarifa Contratada",
                     )
-                    c3.metric(
+                    c4.metric(
                         "Frete Simulador (Should Cost)",
                         f"R$ {frete_simulador:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                         delta=f"{dif_antt_pct:.0f}% vs ANTT",
                     )
-                    c4.metric("Viagens Estimadas/Mês", f"{viagens_mes:.1f} viagens")
 
                     st.write("")
-                    c5, c6, c7 = st.columns(3)
+                    c5, c6, c7, c8 = st.columns(4)
                     c5.metric(
                         "Distância da Rota (Google Maps)",
                         f"{km_rota:,.1f} km".replace(",", "X").replace(".", ",").replace("X", "."),
@@ -1081,6 +1157,7 @@ if not df_rotas_bruta.empty:
                     )
                     c6.metric("Tempo Total Operacional (H)", f"{tempo_operacao_total_h:.1f} h")
                     c7.metric("Tempo Trânsito (H)", f"{tempo_transito_h:.1f} h")
+                    c8.metric("Viagens Estimadas/Mês", f"{viagens_mes:.1f} viagens")
 
                     st.write("---")
                     st.markdown("#### 📊 Composição de Frete (Valores Mensais e %)")
@@ -1225,6 +1302,8 @@ if not df_rotas_bruta.empty:
                             "ORIGEM",
                             "DESTINO",
                             "EQUIPAMENTO",
+                            "TIPOLOGIA",
+                            "TIPO_DE_OPERACAO",
                             "FRETE",
                             "ANTT",
                             "DIF",
@@ -1248,7 +1327,7 @@ if not df_rotas_bruta.empty:
         )
 
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Especialista em Should Cost da Natura.
-        Sua função é apresentar o Should Cost fiel à planilha oficial do Google Sheets.
+        Sua função é apresentar o Should Cost fiel à planilha oficial do Google Sheets, levando em consideração a Tipologia de Operação (Direta, Consolidada ou Redespacho).
 
         === ESTRUTURA PADRÃO DO SHOULD COST (10 PILARES OFICIAIS) ===
         Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo os 10 componentes da planilha:
@@ -1264,7 +1343,13 @@ if not df_rotas_bruta.empty:
         9. LUCRO: Margem de Lucro do Transportador (10%)
         10. PIS / COFINS: Impostos incidentes sobre o frete (9,25%)
 
+        === DIFESTAÇÃO DE TIPOLOGIA DE OPERAÇÃO ===
+        - DIRETA: Operação ponto a ponto FTL tradicional sem intermediários.
+        - CONSOLIDADA: Operação com transbordo/consolidação em HUB ou CD intermediário.
+        - REDESPACHO: Operação com entrega fracionada ou Milk Run de distribuição final.
+
         === REGRAS DE APRESENTAÇÃO ===
+        - Identifique explicitamente se a rota consultada é Direta, Consolidada ou Redespacho.
         - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
         - Utilize apenas os parâmetros cadastrados nas abas Apoio_FIPE, Parametros_Custos e Rotas_Ativas.
         - Para consultas de rotas específicas, utilize os dados de [TABELA REAL - TOP ROTAS ABAIXO DA ANTT].
@@ -1287,7 +1372,7 @@ if not df_rotas_bruta.empty:
 
         pergunta = st.chat_input(
             "Ex: Monte o Should Cost detalhado da rota Benevides x Uberlândia com"
-            " os 10 pilares e a quantidade de viagens por mês."
+            " os 10 pilares, tipologia da operação e a quantidade de viagens por mês."
         )
         if pergunta:
             st.chat_message("user").markdown(pergunta)
