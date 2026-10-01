@@ -872,7 +872,7 @@ if not df_rotas_bruta.empty:
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT (Col AV)."
+                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
