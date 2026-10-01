@@ -755,11 +755,11 @@ if not df_rotas_bruta.empty:
                         color="#FF6600",
                     )
                 else:
-                    st.warning("⚠️ Os valores calculados vieram zerados.")
+                    st.warning("⚠️️ Os valores calculados vieram zerados.")
             else:
                 st.error("🚨 Coluna de Origem não encontrada!")
 
-        # 🗺️ MAPA LOGÍSTICO DENSIDADE + ARCOS
+        # 🗺️ MAPA LOGÍSTICO DENSIDADE (SEM LINHAS PARA O DESTINO)
         with aba_mapa:
             col_lat_o = encontrar_coluna(df_rotas, ["LAT"], excluir=["DEST"])
             col_lon_o = encontrar_coluna(df_rotas, ["LON"], excluir=["DEST"])
@@ -820,7 +820,7 @@ if not df_rotas_bruta.empty:
                             <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Volume</div>
                             <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Volume</div>
                             <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Alto Volume (Gargalo)</div>
-                            <div class="item-legenda"><span class="bola-legenda" style="background:#00C8FF;"></span> Destino Ciano</div>
+                            <div class="item-legenda"><span class="bola-legenda" style="background:#00C8FF;"></span> Ponto de Destino</div>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -842,23 +842,13 @@ if not df_rotas_bruta.empty:
                         get_radius=12000,
                         pickable=True,
                     )
-                    camada_arcos = pdk.Layer(
-                        "ArcLayer",
-                        data=df_mapa,
-                        get_source_position=["lon_origem", "lat_origem"],
-                        get_target_position=["lon_destino", "lat_destino"],
-                        get_source_color="cor_origem",
-                        get_target_color=[0, 200, 255, 160],
-                        get_width=3,
-                        pickable=True,
-                    )
 
                     visao = pdk.ViewState(
-                        latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=45
+                        latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=0
                     )
                     st.pydeck_chart(
                         pdk.Deck(
-                            layers=[camada_origens, camada_destinos, camada_arcos],
+                            layers=[camada_origens, camada_destinos],
                             initial_view_state=visao,
                             map_style=None,
                         )
