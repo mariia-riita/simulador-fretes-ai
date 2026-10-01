@@ -56,7 +56,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- 2. CONSTANTES E CONEXÕES ---
+# --- 2. CONSTANTES E CONEXÕES (LINKS ORIGINAIS MANTIDOS) ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
 LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
@@ -847,21 +847,11 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-        # 📋 ABA: SHOULD COST DINÂMICO FIEL À PLANILHA OFICIAL (BASE CÁLCULO & APOIO)
+        # 📋 ABA: SHOULD COST DINÂMICO CORRIGIDO (FRETES CURTOS, MÉDIOS E LONGOS)
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost, frete por viagem, ANTT, horas operacionais e"
-                " KMs do Google Maps."
-            )
-
-            col_km_fallback = encontrar_coluna(
-                df_rotas,
-                ["KM'S CONFERIDOS", "DISTÂNCIA", "DISTANCIA", "KM"],
-                excluir=["PONDE", "TOTAL", "MÊS", "MES", "SPEND"],
-            )
-            col_veic = encontrar_coluna(
-                df_rotas, ["VEÍCULO", "VEICULO", "PERFIL", "EQUIPAMENTO", "TIPO"]
+                "Cálculo exato dos 10 Pilares do Should Cost, Frete Natura Atual, ANTT e tempo operacional."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
@@ -879,69 +869,94 @@ if not df_rotas_bruta.empty:
                 if not df_foco.empty:
                     df_rota_foco = df_foco.iloc[0]
 
-                    # Distância do Google Maps / Fallback
+                    # 1. DISTÂNCIA REAL DA ROTA (km)
                     km_maps = df_rota_foco.get("KM_GOOGLE_MAPS", None)
-                    if (
-                        pd.notna(km_maps)
-                        and isinstance(km_maps, (int, float))
-                        and km_maps > 0
-                    ):
+                    if pd.notna(km_maps) and isinstance(km_maps, (int, float)) and km_maps > 0:
                         km_rota = float(km_maps)
                     else:
-                        km_val = (
-                            limpar_numero_br_correto(df_rota_foco.get(col_km_fallback, 0))
-                            if col_km_fallback
-                            else 0.0
-                        )
-                        km_rota = km_val if km_val > 0 else 2310.0
+                        km_val = 0.0
+                        for col_k in ["KM'S CONFERIDOS", "DISTÂNCIA", "DISTANCIA", "KM"]:
+                            if col_k in df_rota_foco.index and pd.notna(df_rota_foco[col_k]):
+                                v_k = limpar_numero_br_correto(df_rota_foco[col_k])
+                                if v_k > 0:
+                                    km_val = v_k
+                                    break
+                        km_rota = km_val if km_val > 0 else 70.0
 
-                    perfil_veic_str = (
-                        str(df_rota_foco.get(col_veic, "CARRETA")).upper()
-                        if col_veic
-                        else "CARRETA"
-                    )
+                    # 2. PERFIL DO VEÍCULO
+                    perfil_veic_str = "CARRETA"
+                    for col_p in ["PERFIL_GRUPO_DE_EQUIPAMENTO", "EQUIPAMENTO", "TIPOLOGIA", "PERFIL", "VEÍCULO", "VEICULO"]:
+                        if col_p in df_rota_foco.index and pd.notna(df_rota_foco[col_p]):
+                            p_s = str(df_rota_foco[col_p]).upper()
+                            if "TRUCK" in p_s:
+                                perfil_veic_str = "TRUCK"
+                                break
+                            elif "RODOTREM" in p_s:
+                                perfil_veic_str = "RODOTREM"
+                                break
 
-                    # MOTOR DE CÁLCULO FIEL À BASE_CÁLCULO E APOIO
-                    velocidade = (
-                        45.0 if "TRUCK" in perfil_veic_str
-                        else (60.0 if "RODOTREM" in perfil_veic_str else 65.0)
-                    )
+                    # 3. FRETE NATURA ATUAL NA PLANILHA
+                    frete_natura_atual = 0.0
+                    for col_nat in ["CUSTO_TOTAL", "TARIFA NATURA", "CONTRATO", "BASE", "FRETE", "CONS"]:
+                        if col_nat in df_rota_foco.index and pd.notna(df_rota_foco[col_nat]):
+                            v_nat = limpar_numero_br_correto(df_rota_foco[col_nat])
+                            if v_nat > 0:
+                                frete_natura_atual = v_nat
+                                break
+
+                    # 4. TABELA OFICIAL ANTT (FÓRMULA POR TABELA DE LOTAÇÃO)
+                    if perfil_veic_str == "TRUCK":
+                        var_antt, fixo_antt = 4.970, 523.33
+                    elif perfil_veic_str == "RODOTREM":
+                        var_antt, fixo_antt = 8.980, 872.44
+                    else:  # CARRETA
+                        var_antt, fixo_antt = 6.513, 635.08
+
+                    frete_antt = (km_rota * var_antt) + fixo_antt
+                    frete_antt_por_km = frete_antt / km_rota if km_rota > 0 else 0
+
+                    # 5. TEMPOS OPERACIONAIS ADEQUADOS À DISTÂNCIA
+                    t_c_raw = limpar_numero_br_correto(df_rota_foco.get("TEMPO CARGA", 0))
+                    t_d_raw = limpar_numero_br_correto(df_rota_foco.get("TEMPO DESCARGA", 0))
+
+                    if t_c_raw > 0:
+                        tempo_carga_h = t_c_raw
+                    else:
+                        tempo_carga_h = 2.0 if km_rota < 200 else (6.0 if km_rota < 800 else 12.0)
+
+                    if t_d_raw > 0:
+                        tempo_descarga_h = t_d_raw
+                    else:
+                        tempo_descarga_h = 2.0 if km_rota < 200 else (6.0 if km_rota < 800 else 12.0)
+
+                    velocidade = 50.0 if km_rota < 200 else (60.0 if km_rota < 800 else 65.0)
                     tempo_transito_h = km_rota / velocidade
-                    tempo_carga_h = float(limpar_numero_br_correto(df_rota_foco.get("TEMPO CARGA", 12.0)))
-                    tempo_carga_h = tempo_carga_h if tempo_carga_h > 0 else 12.0
-                    
-                    tempo_descarga_h = float(limpar_numero_br_correto(df_rota_foco.get("TEMPO DESCARGA", 24.0)))
-                    tempo_descarga_h = tempo_descarga_h if tempo_descarga_h > 0 else 24.0
-
                     tempo_operacao_total_h = tempo_transito_h + tempo_carga_h + tempo_descarga_h
                     dias_operacao = tempo_operacao_total_h / 10.0
 
-                    # Viagens mês (Tabela ou capacidade 240h / tempo_op)
-                    v_mes_tab = float(limpar_numero_br_correto(df_rota_foco.get("VIAGENS MÊS", df_rota_foco.get("VIAGENS", 0))))
-                    if v_mes_tab > 0 and v_mes_tab < 300:
-                        viagens_mes = v_mes_tab
+                    v_mes_raw = limpar_numero_br_correto(df_rota_foco.get("VIAGENS MÊS", df_rota_foco.get("VIAGENS", 0)))
+                    if v_mes_raw > 0 and v_mes_raw < 300:
+                        viagens_mes = v_mes_raw
                     else:
                         viagens_mes = 240.0 / tempo_operacao_total_h if tempo_operacao_total_h > 0 else 1.0
 
                     km_rodado_mensal = km_rota * viagens_mes
 
-                    # Parâmetros FIPE / Ativo por perfil
-                    if "TRUCK" in perfil_veic_str:
+                    # 6. PARÂMETROS DO ATIVO
+                    if perfil_veic_str == "TRUCK":
                         preco_v, res_v, mes_v = 472000.0, 0.48, 72.0
                         preco_i, res_i, mes_i = 700000.0, 0.45, 60.0
                         salario, ben = 4800.0, 220.0
                         manut_km, rend_d, rend_a = 0.40, 3.5, 40.0
                         carter, lav_p, lav_km = 28.0, 300.0, 9000.0
                         pneu_km = 0.177523
-                        var_antt, fixo_antt = 4.970, 523.33
-                    elif "RODOTREM" in perfil_veic_str:
+                    elif perfil_veic_str == "RODOTREM":
                         preco_v, res_v, mes_v = 762000.0, 0.48, 72.0
                         preco_i, res_i, mes_i = 950000.0, 0.45, 60.0
                         salario, ben = 8500.0, 220.0
                         manut_km, rend_d, rend_a = 0.65, 2.5, 60.0
                         carter, lav_p, lav_km = 40.0, 600.0, 9000.0
                         pneu_km = 0.702333
-                        var_antt, fixo_antt = 8.980, 872.44
                     else:  # CARRETA
                         preco_v, res_v, mes_v = 662000.0, 0.48, 60.0
                         preco_i, res_i, mes_i = 900000.0, 0.45, 60.0
@@ -949,46 +964,35 @@ if not df_rotas_bruta.empty:
                         manut_km, rend_d, rend_a = 0.50, 3.0, 50.0
                         carter, lav_p, lav_km = 40.0, 450.0, 9000.0
                         pneu_km = 0.335713
-                        var_antt, fixo_antt = 6.513, 635.08
 
-                    # COMPONENTES DOS 10 PILARES OFICIAIS (VALORES MENSAIS)
-                    # 1. VEÍCULO (Depreciação + Remuneração de Capital)
+                    # COMPONENTES DOS 10 PILARES (MENSAL)
                     dep_v = (preco_v * (1.0 - res_v)) / mes_v
                     dep_i = (preco_i * (1.0 - res_i)) / mes_i
                     rem_capital = (preco_v + preco_i) * 0.0125
                     veiculo_mes = dep_v + dep_i + rem_capital
 
-                    # 2. MÃO DE OBRA
-                    mo_tab = float(limpar_numero_br_correto(df_rota_foco.get("CUSTO MÃO DE OBRA", df_rota_foco.get("MÃO DE OBRA", 0))))
-                    mao_obra_mes = mo_tab if mo_tab > 0 else (salario * 1.75 + ben) * 1.09091
+                    mo_raw = limpar_numero_br_correto(df_rota_foco.get("CUSTO MÃO DE OBRA", df_rota_foco.get("MÃO DE OBRA", 0)))
+                    mao_obra_mes = mo_raw if mo_raw > 0 else (salario * 1.75 + ben) * 1.09091
 
-                    # 3. DOCUMENTOS
                     ipva = (preco_v * (1.0 - res_v)) * 0.02 / 12.0
                     docs_mes = ipva + 15.0 + 20.8333
 
-                    # 4. SEGUROS
-                    seg_v = 1959.52 if "CARRETA" in perfil_veic_str else preco_v * 0.048 / 12.0
-                    seg_i = 2610.00 if "CARRETA" in perfil_veic_str else preco_i * 0.048 / 12.0
+                    seg_v = 1959.52 if perfil_veic_str == "CARRETA" else preco_v * 0.048 / 12.0
+                    seg_i = 2610.00 if perfil_veic_str == "CARRETA" else preco_i * 0.048 / 12.0
                     seguros_mes = seg_v + seg_i
 
-                    # 5. MANUTENÇÃO
                     manutencao_mes = km_rodado_mensal * manut_km
-
-                    # 6. COMBUSTÍVEL (Ajustado dinamicamente com Preço Sidebar do Diesel S10 + ARLA 32)
                     comb_diesel = km_rodado_mensal * (diesel_medio_atual / rend_d)
                     comb_arla = km_rodado_mensal * (4.0 / rend_a)
                     combustivel_mes = comb_diesel + comb_arla
 
-                    # 7. LUBRIFICANTE E LAVAGEM
                     lubrificante = km_rodado_mensal * (carter * 33.4 / 30000.0)
                     lavagem = km_rodado_mensal * (lav_p / lav_km)
                     lub_lav_mes = lubrificante + lavagem
 
-                    # 8. PNEU
                     pneu_mes = km_rodado_mensal * pneu_km
 
-                    # Subtotal de Custos antes da margem e impostos
-                    subtotal_operacional_mes = (
+                    subtotal_mes = (
                         veiculo_mes
                         + mao_obra_mes
                         + docs_mes
@@ -999,56 +1003,50 @@ if not df_rotas_bruta.empty:
                         + pneu_mes
                     )
 
-                    # 9. LUCRO (10%)
-                    lucro_mes = subtotal_operacional_mes * 0.10
+                    lucro_mes = subtotal_mes * 0.10
+                    piscofins_mes = (subtotal_mes + lucro_mes) * (0.0925 / (1.0 - 0.0925))
 
-                    # 10. PIS / COFINS (9,25% por dentro)
-                    piscofins_mes = (subtotal_operacional_mes + lucro_mes) * (0.0925 / (1.0 - 0.0925))
-
-                    custo_total_mes = subtotal_operacional_mes + lucro_mes + piscofins_mes
+                    custo_total_mes = subtotal_mes + lucro_mes + piscofins_mes
 
                     frete_simulador = custo_total_mes / viagens_mes if viagens_mes > 0 else 0
                     frete_simulador_por_km = frete_simulador / km_rota if km_rota > 0 else 0
 
-                    # TABELA ANTT
-                    frete_antt = (km_rota * var_antt) + fixo_antt
-                    frete_antt_por_km = frete_antt / km_rota if km_rota > 0 else 0
                     dif_antt_pct = (
                         ((frete_simulador - frete_antt) / frete_antt) * 100.0
                         if frete_antt > 0
                         else 0.0
                     )
 
-                    # EXIBIÇÃO IDÊNTICA AO PAINEL OFICIAL
+                    # EXIBIÇÃO PAINEL PRINCIPAL
                     st.write("---")
-                    c1, c2, c3 = st.columns([1.2, 1, 1])
+                    c1, c2, c3, c4 = st.columns(4)
+                    
                     c1.metric(
-                        "Frete Simulador",
-                        f"R$ {frete_simulador:,.2f}".replace(",", "X")
-                        .replace(".", ",")
-                        .replace("X", "."),
-                        delta=f"R$ {frete_simulador_por_km:.2f} / km",
+                        "Frete Natura (Atual)",
+                        f"R$ {frete_simulador if frete_natura_atual == 0 else frete_natura_atual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                        delta="Tarifa Contratada" if frete_natura_atual > 0 else "Calculada",
                     )
                     c2.metric(
-                        "Frete ANTT",
-                        f"R$ {frete_antt:,.2f}".replace(",", "X")
-                        .replace(".", ",")
-                        .replace("X", "."),
+                        "Frete Simulador (Should Cost)",
+                        f"R$ {frete_simulador:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                        delta=f"R$ {frete_simulador_por_km:.2f} / km",
+                    )
+                    c3.metric(
+                        "Frete Mínimo ANTT",
+                        f"R$ {frete_antt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                         delta=f"{dif_antt_pct:.0f}% vs Simulador",
                     )
-                    c3.metric("Dias Total de Operação", f"{dias_operacao:.1f} dias")
+                    c4.metric("Viagens Estimadas/Mês", f"{viagens_mes:.1f} viagens")
 
                     st.write("")
-                    c4, c5, c6 = st.columns(3)
-                    c4.metric(
+                    c5, c6, c7 = st.columns(3)
+                    c5.metric(
                         "Distância da Rota (Google Maps)",
-                        f"{km_rota:,.1f} km".replace(",", "X")
-                        .replace(".", ",")
-                        .replace("X", "."),
+                        f"{km_rota:,.1f} km".replace(",", "X").replace(".", ",").replace("X", "."),
                         delta="Percurso One-Way",
                     )
-                    c5.metric("Tempo Total (H)", f"{tempo_operacao_total_h:.1f} h")
-                    c6.metric("Tempo Trânsito (H)", f"{tempo_transito_h:.1f} h")
+                    c6.metric("Tempo Total Operacional (H)", f"{tempo_operacao_total_h:.1f} h")
+                    c7.metric("Tempo Trânsito (H)", f"{tempo_transito_h:.1f} h")
 
                     st.write("---")
                     st.markdown("#### 📊 Composição de Frete (Valores Mensais e %)")
