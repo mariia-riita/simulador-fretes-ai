@@ -847,11 +847,11 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-        # 📋 ABA: SHOULD COST DINÂMICO CORRIGIDO (FRETES CURTOS, MÉDIOS E LONGOS)
+        # 📋 ABA: SHOULD COST DINÂMICO (LEITURA EXATA DO FRETE MÍNIMO ANTT DA COLUNA AV / ROTAS_ATIVAS)
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost, Frete Natura Atual, ANTT e tempo operacional."
+                "Cálculo exato dos 10 Pilares do Should Cost, Frete Natura Atual, ANTT da Coluna AV e tempo operacional."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
@@ -904,15 +904,49 @@ if not df_rotas_bruta.empty:
                                 frete_natura_atual = v_nat
                                 break
 
-                    # 4. TABELA OFICIAL ANTT (FÓRMULA POR TABELA DE LOTAÇÃO)
-                    if perfil_veic_str == "TRUCK":
-                        var_antt, fixo_antt = 4.970, 523.33
-                    elif perfil_veic_str == "RODOTREM":
-                        var_antt, fixo_antt = 8.980, 872.44
-                    else:  # CARRETA
-                        var_antt, fixo_antt = 6.513, 635.08
+                    # 4. FRETE MÍNIMO ANTT - BUSCA DIRETA DA COLUNA AV / 'FRETE MINIMO' EM ROTAS_ATIVAS
+                    frete_antt = 0.0
 
-                    frete_antt = (km_rota * var_antt) + fixo_antt
+                    col_antt_found = encontrar_coluna(
+                        df_rotas,
+                        [
+                            "FRETE MINIMO",
+                            "FRETE MÍNIMO",
+                            "PISO MÍNIMO",
+                            "PISO MINIMO",
+                            "PISO ANTT",
+                            "MINIMO ANTT",
+                            "MÍNIMO ANTT",
+                            "FRETE ANTT",
+                            "ANTT",
+                        ],
+                        excluir=["DIF", "VARIAÇÃO", "VARIACAO", "SPEND", "STATUS", "DIFERENÇA"],
+                    )
+
+                    if col_antt_found and col_antt_found in df_rota_foco.index:
+                        val_antt_col = limpar_numero_br_correto(df_rota_foco.get(col_antt_found, 0))
+                        if val_antt_col > 0:
+                            frete_antt = val_antt_col
+
+                    # Leitura direta do índice 47 (Coluna AV da planilha em base 0-indexed)
+                    if frete_antt == 0.0 and len(df_rota_foco) > 47:
+                        try:
+                            val_av = limpar_numero_br_correto(df_rota_foco.iloc[47])
+                            if val_av > 0:
+                                frete_antt = val_av
+                        except:
+                            pass
+
+                    # Fallback caso não esteja preenchido na planilha
+                    if frete_antt == 0.0 and km_rota > 0:
+                        if perfil_veic_str == "TRUCK":
+                            var_antt, fixo_antt = 4.970, 523.33
+                        elif perfil_veic_str == "RODOTREM":
+                            var_antt, fixo_antt = 8.980, 872.44
+                        else:  # CARRETA
+                            var_antt, fixo_antt = 6.513, 635.08
+                        frete_antt = (km_rota * var_antt) + fixo_antt
+
                     frete_antt_por_km = frete_antt / km_rota if km_rota > 0 else 0
 
                     # 5. TEMPOS OPERACIONAIS ADEQUADOS À DISTÂNCIA
@@ -1022,19 +1056,19 @@ if not df_rotas_bruta.empty:
                     c1, c2, c3, c4 = st.columns(4)
                     
                     c1.metric(
-                        "Frete Natura (Atual)",
-                        f"R$ {frete_simulador if frete_natura_atual == 0 else frete_natura_atual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                        delta="Tarifa Contratada" if frete_natura_atual > 0 else "Calculada",
+                        "Frete Mínimo ANTT (Coluna AV)",
+                        f"R$ {frete_antt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                        delta=f"R$ {frete_antt_por_km:.2f} / km",
                     )
                     c2.metric(
-                        "Frete Simulador (Should Cost)",
-                        f"R$ {frete_simulador:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                        delta=f"R$ {frete_simulador_por_km:.2f} / km",
+                        "Frete Natura (Atual)",
+                        f"R$ {frete_natura_atual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                        delta="Tarifa Contratada",
                     )
                     c3.metric(
-                        "Frete Mínimo ANTT",
-                        f"R$ {frete_antt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                        delta=f"{dif_antt_pct:.0f}% vs Simulador",
+                        "Frete Simulador (Should Cost)",
+                        f"R$ {frete_simulador:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                        delta=f"{dif_antt_pct:.0f}% vs ANTT",
                     )
                     c4.metric("Viagens Estimadas/Mês", f"{viagens_mes:.1f} viagens")
 
