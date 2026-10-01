@@ -755,11 +755,11 @@ if not df_rotas_bruta.empty:
                         color="#FF6600",
                     )
                 else:
-                    st.warning("⚠️️ Os valores calculados vieram zerados.")
+                    st.warning("⚠️ Os valores calculados vieram zerados.")
             else:
                 st.error("🚨 Coluna de Origem não encontrada!")
 
-        # 🗺️ MAPA LOGÍSTICO DENSIDADE (SEM LINHAS PARA O DESTINO)
+        # 🗺️ MAPA LOGÍSTICO DENSIDADE + LINHAS COM A MESMA COR DE DENSIDADE (SEM AZUL CIANO)
         with aba_mapa:
             col_lat_o = encontrar_coluna(df_rotas, ["LAT"], excluir=["DEST"])
             col_lon_o = encontrar_coluna(df_rotas, ["LON"], excluir=["DEST"])
@@ -816,11 +816,10 @@ if not df_rotas_bruta.empty:
                     st.markdown(
                         """
                         <div class="legenda-mapa">
-                            <span style="font-weight:600; color:#FF9900;">📍 Densidade de Origem (Volume):</span>
+                            <span style="font-weight:600; color:#FF9900;">📍 Densidade de Origem e Fluxo:</span>
                             <div class="item-legenda"><span class="bola-legenda" style="background:#FFD700;"></span> Baixo Volume</div>
                             <div class="item-legenda"><span class="bola-legenda" style="background:#FF8200;"></span> Médio Volume</div>
                             <div class="item-legenda"><span class="bola-legenda" style="background:#E61919;"></span> Alto Volume (Gargalo)</div>
-                            <div class="item-legenda"><span class="bola-legenda" style="background:#00C8FF;"></span> Ponto de Destino</div>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -838,17 +837,27 @@ if not df_rotas_bruta.empty:
                         "ScatterplotLayer",
                         data=df_mapa,
                         get_position=["lon_destino", "lat_destino"],
-                        get_color=[0, 200, 255, 200],
-                        get_radius=12000,
+                        get_color="cor_origem",
+                        get_radius=10000,
+                        pickable=True,
+                    )
+                    camada_arcos = pdk.Layer(
+                        "ArcLayer",
+                        data=df_mapa,
+                        get_source_position=["lon_origem", "lat_origem"],
+                        get_target_position=["lon_destino", "lat_destino"],
+                        get_source_color="cor_origem",
+                        get_target_color="cor_origem",
+                        get_width=2.5,
                         pickable=True,
                     )
 
                     visao = pdk.ViewState(
-                        latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=0
+                        latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=40
                     )
                     st.pydeck_chart(
                         pdk.Deck(
-                            layers=[camada_origens, camada_destinos],
+                            layers=[camada_origens, camada_destinos, camada_arcos],
                             initial_view_state=visao,
                             map_style=None,
                         )
@@ -862,7 +871,7 @@ if not df_rotas_bruta.empty:
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT."
+                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT (Col AV)."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
