@@ -264,7 +264,6 @@ def preparar_rotas_com_km_maps(df_rotas_in, df_kms_in):
     s_uf_o = extrair_series(df_rotas, col_uf_o)
     s_uf_d = extrair_series(df_rotas, col_uf_d)
 
-    # Identifica a coluna de Tipo de Operação / Tipologia
     col_tipo_op = encontrar_coluna(
         df_rotas,
         [
@@ -869,11 +868,11 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-        # 📋 ABA: SHOULD COST DINÂMICO (SUPORTE COMPLETO A TIPOLOGIA: DIRETA, CONSOLIDADA E REDESPACHO)
+        # 📋 ABA: SHOULD COST DINÂMICO (DETALHAMENTO RATEADO POR VIAGEM & MENSAL)
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura, ANTT (Col AV) e tempo operacional."
+                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT (Col AV)."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
@@ -917,7 +916,6 @@ if not df_rotas_bruta.empty:
                         if v_t not in ["", "NAN", "NONE", "NULL", "-"]:
                             tipo_op_val = v_t
 
-                    # Varredura completa nas chaves da linha caso a coluna não seja por cabeçalho
                     if tipo_op_val == "DIRETA":
                         for k_op in df_rota_foco.index:
                             k_clean = str(k_op).upper().strip().replace("\n", " ").replace("\r", " ")
@@ -927,18 +925,14 @@ if not df_rotas_bruta.empty:
                                     tipo_op_val = val_op
                                     break
 
-                    # Formatador visual com badge
                     if "CONSOLID" in tipo_op_val or "HUB" in tipo_op_val:
                         tipo_op_display = "📦 Consolidada (Transferência / HUB)"
-                        tipo_op_tag = "CONSOLIDADA"
-                        buffer_tempo_op = 4.0  # +4h para manuseio/consolidação
+                        buffer_tempo_op = 4.0  # +4h para manuseio HUB
                     elif "REDESPACHO" in tipo_op_val or "MILK" in tipo_op_val or "FRACION" in tipo_op_val:
                         tipo_op_display = "🔄 Redespacho (Milk Run / Distribuição)"
-                        tipo_op_tag = "REDESPACHO"
-                        buffer_tempo_op = 6.0  # +6h para transbordo/redespacho local
+                        buffer_tempo_op = 6.0  # +6h para transbordo local
                     else:
                         tipo_op_display = "🎯 Direta (Ponto a Ponto)"
-                        tipo_op_tag = "DIRETA"
                         buffer_tempo_op = 0.0
 
                     # 2. DISTÂNCIA REAL DA ROTA (km)
@@ -976,7 +970,7 @@ if not df_rotas_bruta.empty:
                                 frete_natura_atual = v_nat
                                 break
 
-                    # 5. FRETE MÍNIMO ANTT - BUSCA DIRETA DA COLUNA AV / 'FRETE MINIMO' EM ROTAS_ATIVAS
+                    # 5. FRETE MÍNIMO ANTT (BUSCA DIRETA COLUNA AV OU FÓRMULA OFICIAL)
                     frete_antt = 0.0
 
                     col_antt_found = encontrar_coluna(
@@ -1000,7 +994,6 @@ if not df_rotas_bruta.empty:
                         if val_antt_col > 0:
                             frete_antt = val_antt_col
 
-                    # Leitura direta do índice 47 (Coluna AV da planilha em base 0-indexed)
                     if frete_antt == 0.0 and len(df_rota_foco) > 47:
                         try:
                             val_av = limpar_numero_br_correto(df_rota_foco.iloc[47])
@@ -1009,7 +1002,6 @@ if not df_rotas_bruta.empty:
                         except:
                             pass
 
-                    # Fallback caso não esteja preenchido na planilha
                     if frete_antt == 0.0 and km_rota > 0:
                         if perfil_veic_str == "TRUCK":
                             var_antt, fixo_antt = 4.970, 523.33
@@ -1046,9 +1038,7 @@ if not df_rotas_bruta.empty:
                     else:
                         viagens_mes = 240.0 / tempo_operacao_total_h if tempo_operacao_total_h > 0 else 1.0
 
-                    km_rodado_mensal = km_rota * viagens_mes
-
-                    # 7. PARÂMETROS DO ATIVO
+                    # 7. PARÂMETROS DO ATIVO MENSAL
                     if perfil_veic_str == "TRUCK":
                         preco_v, res_v, mes_v = 472000.0, 0.48, 72.0
                         preco_i, res_i, mes_i = 700000.0, 0.45, 60.0
@@ -1071,7 +1061,7 @@ if not df_rotas_bruta.empty:
                         carter, lav_p, lav_km = 40.0, 450.0, 9000.0
                         pneu_km = 0.335713
 
-                    # COMPONENTES DOS 10 PILARES (MENSAL)
+                    # BASE MENSAL DO CAMINHÃO
                     dep_v = (preco_v * (1.0 - res_v)) / mes_v
                     dep_i = (preco_i * (1.0 - res_i)) / mes_i
                     rem_capital = (preco_v + preco_i) * 0.0125
@@ -1087,34 +1077,38 @@ if not df_rotas_bruta.empty:
                     seg_i = 2610.00 if perfil_veic_str == "CARRETA" else preco_i * 0.048 / 12.0
                     seguros_mes = seg_v + seg_i
 
-                    manutencao_mes = km_rodado_mensal * manut_km
-                    comb_diesel = km_rodado_mensal * (diesel_medio_atual / rend_d)
-                    comb_arla = km_rodado_mensal * (4.0 / rend_a)
-                    combustivel_mes = comb_diesel + comb_arla
+                    # CÁLCULO DOS 10 PILARES RATEADOS POR VIAGEM (EXATO R$/VIAGEM)
+                    veiculo_viagem = veiculo_mes / viagens_mes
+                    mao_obra_viagem = mao_obra_mes / viagens_mes
+                    docs_viagem = docs_mes / viagens_mes
+                    seguros_viagem = seguros_mes / viagens_mes
 
-                    lubrificante = km_rodado_mensal * (carter * 33.4 / 30000.0)
-                    lavagem = km_rodado_mensal * (lav_p / lav_km)
-                    lub_lav_mes = lubrificante + lavagem
+                    manutencao_viagem = km_rota * manut_km
+                    comb_diesel_viagem = km_rota * (diesel_medio_atual / rend_d)
+                    comb_arla_viagem = km_rota * (4.0 / rend_a)
+                    combustivel_viagem = comb_diesel_viagem + comb_arla_viagem
 
-                    pneu_mes = km_rodado_mensal * pneu_km
+                    lubrificante_viagem = km_rota * (carter * 33.4 / 30000.0)
+                    lavagem_viagem = km_rota * (lav_p / lav_km)
+                    lub_lav_viagem = lubrificante_viagem + lavagem_viagem
 
-                    subtotal_mes = (
-                        veiculo_mes
-                        + mao_obra_mes
-                        + docs_mes
-                        + seguros_mes
-                        + manutencao_mes
-                        + combustivel_mes
-                        + lub_lav_mes
-                        + pneu_mes
+                    pneu_viagem = km_rota * pneu_km
+
+                    subtotal_viagem = (
+                        veiculo_viagem
+                        + mao_obra_viagem
+                        + docs_viagem
+                        + seguros_viagem
+                        + manutencao_viagem
+                        + combustivel_viagem
+                        + lub_lav_viagem
+                        + pneu_viagem
                     )
 
-                    lucro_mes = subtotal_mes * 0.10
-                    piscofins_mes = (subtotal_mes + lucro_mes) * (0.0925 / (1.0 - 0.0925))
+                    lucro_viagem = subtotal_viagem * 0.10
+                    piscofins_viagem = (subtotal_viagem + lucro_viagem) * (0.0925 / (1.0 - 0.0925))
 
-                    custo_total_mes = subtotal_mes + lucro_mes + piscofins_mes
-
-                    frete_simulador = custo_total_mes / viagens_mes if viagens_mes > 0 else 0
+                    frete_simulador = subtotal_viagem + lucro_viagem + piscofins_viagem
                     frete_simulador_por_km = frete_simulador / km_rota if km_rota > 0 else 0
 
                     dif_antt_pct = (
@@ -1160,90 +1154,85 @@ if not df_rotas_bruta.empty:
                     c8.metric("Viagens Estimadas/Mês", f"{viagens_mes:.1f} viagens")
 
                     st.write("---")
-                    st.markdown("#### 📊 Composição de Frete (Valores Mensais e %)")
+                    st.markdown("#### 📊 Composição Detalhada do Frete")
 
-                    pilares_oficiais = [
-                        {
-                            "Item": "Veículo",
-                            "Valor Mensal (R$)": veiculo_mes,
-                            "%": veiculo_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Mão de Obra",
-                            "Valor Mensal (R$)": mao_obra_mes,
-                            "%": mao_obra_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Documentos",
-                            "Valor Mensal (R$)": docs_mes,
-                            "%": docs_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Seguros",
-                            "Valor Mensal (R$)": seguros_mes,
-                            "%": seguros_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Manutenção",
-                            "Valor Mensal (R$)": manutencao_mes,
-                            "%": manutencao_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Combustível",
-                            "Valor Mensal (R$)": combustivel_mes,
-                            "%": combustivel_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Lubrificante e Lavagem",
-                            "Valor Mensal (R$)": lub_lav_mes,
-                            "%": lub_lav_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Pneu",
-                            "Valor Mensal (R$)": pneu_mes,
-                            "%": pneu_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "Lucro",
-                            "Valor Mensal (R$)": lucro_mes,
-                            "%": lucro_mes / custo_total_mes,
-                        },
-                        {
-                            "Item": "PIS/Cofins",
-                            "Valor Mensal (R$)": piscofins_mes,
-                            "%": piscofins_mes / custo_total_mes,
-                        },
-                    ]
+                    # SELETOR DE VISÃO (POR VIAGEM VS MENSAL)
+                    opcao_visao = st.radio(
+                        "Escolha a escala de visualização dos 10 Pilares:",
+                        ["🚚 Por Viagem (R$/Viagem)", "🗓️ Mensal do Ativo (R$/Mês)"],
+                        horizontal=True,
+                    )
+
+                    if "Por Viagem" in opcao_visao:
+                        pilares_oficiais = [
+                            {"Item": "Veículo", "Valor (R$)": veiculo_viagem, "%": veiculo_viagem / frete_simulador},
+                            {"Item": "Mão de Obra", "Valor (R$)": mao_obra_viagem, "%": mao_obra_viagem / frete_simulador},
+                            {"Item": "Documentos", "Valor (R$)": docs_viagem, "%": docs_viagem / frete_simulador},
+                            {"Item": "Seguros", "Valor (R$)": seguros_viagem, "%": seguros_viagem / frete_simulador},
+                            {"Item": "Manutenção", "Valor (R$)": manutencao_viagem, "%": manutencao_viagem / frete_simulador},
+                            {"Item": "Combustível", "Valor (R$)": combustivel_viagem, "%": combustivel_viagem / frete_simulador},
+                            {"Item": "Lubrificante e Lavagem", "Valor (R$)": lub_lav_viagem, "%": lub_lav_viagem / frete_simulador},
+                            {"Item": "Pneu", "Valor (R$)": pneu_viagem, "%": pneu_viagem / frete_simulador},
+                            {"Item": "Lucro", "Valor (R$)": lucro_viagem, "%": lucro_viagem / frete_simulador},
+                            {"Item": "PIS/Cofins", "Valor (R$)": piscofins_viagem, "%": piscofins_viagem / frete_simulador},
+                        ]
+                        col_titulo_tabela = "R$ / Viagem"
+                        total_referencia = frete_simulador
+                    else:
+                        custo_total_mes = frete_simulador * viagens_mes
+                        veiculo_mes_rot = veiculo_viagem * viagens_mes
+                        mao_obra_mes_rot = mao_obra_viagem * viagens_mes
+                        docs_mes_rot = docs_viagem * viagens_mes
+                        seguros_mes_rot = seguros_viagem * viagens_mes
+                        manut_mes_rot = manutencao_viagem * viagens_mes
+                        comb_mes_rot = combustivel_viagem * viagens_mes
+                        lub_mes_rot = lub_lav_viagem * viagens_mes
+                        pneu_mes_rot = pneu_viagem * viagens_mes
+                        lucro_mes_rot = lucro_viagem * viagens_mes
+                        pis_mes_rot = piscofins_viagem * viagens_mes
+
+                        pilares_oficiais = [
+                            {"Item": "Veículo", "Valor (R$)": veiculo_mes_rot, "%": veiculo_mes_rot / custo_total_mes},
+                            {"Item": "Mão de Obra", "Valor (R$)": mao_obra_mes_rot, "%": mao_obra_mes_rot / custo_total_mes},
+                            {"Item": "Documentos", "Valor (R$)": docs_mes_rot, "%": docs_mes_rot / custo_total_mes},
+                            {"Item": "Seguros", "Valor (R$)": seguros_mes_rot, "%": seguros_mes_rot / custo_total_mes},
+                            {"Item": "Manutenção", "Valor (R$)": manut_mes_rot, "%": manut_mes_rot / custo_total_mes},
+                            {"Item": "Combustível", "Valor (R$)": comb_mes_rot, "%": comb_mes_rot / custo_total_mes},
+                            {"Item": "Lubrificante e Lavagem", "Valor (R$)": lub_mes_rot, "%": lub_mes_rot / custo_total_mes},
+                            {"Item": "Pneu", "Valor (R$)": pneu_mes_rot, "%": pneu_mes_rot / custo_total_mes},
+                            {"Item": "Lucro", "Valor (R$)": lucro_mes_rot, "%": lucro_mes_rot / custo_total_mes},
+                            {"Item": "PIS/Cofins", "Valor (R$)": pis_mes_rot, "%": pis_mes_rot / custo_total_mes},
+                        ]
+                        col_titulo_tabela = "R$ / Mês"
+                        total_referencia = custo_total_mes
 
                     df_comp = pd.DataFrame(pilares_oficiais)
                     df_comp["% Representação"] = df_comp["%"].apply(
                         lambda x: f"{x*100:.1f}%"
                     )
-                    df_comp["R$ Mensal"] = df_comp["Valor Mensal (R$)"].apply(
+                    df_comp[col_titulo_tabela] = df_comp["Valor (R$)"].apply(
                         lambda x: f"R$ {x:,.2f}".replace(",", "X")
                         .replace(".", ",")
                         .replace("X", ".")
                     )
 
-                    col_tabela, col_pie = st.columns([1, 1])
+                    col_tabela, col_pie = st.columns([1.1, 0.9])
 
                     with col_tabela:
                         st.dataframe(
-                            df_comp[["Item", "R$ Mensal", "% Representação"]],
+                            df_comp[["Item", col_titulo_tabela, "% Representação"]],
                             use_container_width=True,
                             hide_index=True,
                         )
 
                     with col_pie:
-                        custo_fixo_cat = veiculo_mes + docs_mes + seguros_mes
-                        custo_var_cat = (
-                            manutencao_mes + combustivel_mes + lub_lav_mes + pneu_mes
-                        )
-                        custo_mo_cat = mao_obra_mes
+                        c_fixo = (df_comp[df_comp["Item"].isin(["Veículo", "Documentos", "Seguros"])]["Valor (R$)"].sum())
+                        c_var = (df_comp[df_comp["Item"].isin(["Manutenção", "Combustível", "Lubrificante e Lavagem", "Pneu"])]["Valor (R$)"].sum())
+                        c_mo = (df_comp[df_comp["Item"] == "Mão de Obra"]["Valor (R$)"].sum())
 
                         df_macro = pd.DataFrame({
                             "Categoria": ["Fixo", "Variável", "Mão de Obra"],
-                            "Valor": [custo_fixo_cat, custo_var_cat, custo_mo_cat],
+                            "Valor": [c_fixo, c_var, c_mo],
                         })
                         st.bar_chart(df_macro.set_index("Categoria"), color="#FF6600")
 
@@ -1329,30 +1318,28 @@ if not df_rotas_bruta.empty:
         instrucao = f"""Você é um Engenheiro de Logística Sênior e Especialista em Should Cost da Natura.
         Sua função é apresentar o Should Cost fiel à planilha oficial do Google Sheets, levando em consideração a Tipologia de Operação (Direta, Consolidada ou Redespacho).
 
-        === ESTRUTURA PADRÃO DO SHOULD COST (10 PILARES OFICIAIS) ===
-        Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo os 10 componentes da planilha:
+        === ESTRUTURA PADRÃO DO SHOULD COST (10 PILARES OFICIAIS POR VIAGEM) ===
+        Sempre que for solicitado o Should Cost ou a composição de custos de uma rota, apresente a tabela e o detalhamento seguindo os 10 componentes RATEADOS POR VIAGEM:
 
-        1. VEÍCULO: Depreciação do Cavalo Mecânico + Implemento/Baú + Remuneração do Capital (Juros)
-        2. MÃO DE OBRA: Salário base do motorista + Encargos Sociais/Trabalhistas (75%) + Benefícios + Diárias + Horas Extras
-        3. DOCUMENTOS: IPVA + Licenciamento + Tacógrafo
-        4. SEGUROS: Seguro do Veículo + Seguro do Implemento
-        5. MANUTENÇÃO: Custo de manutenção preventiva/corretiva por Km rodado
-        6. COMBUSTÍVEL: Consumo de Diesel S10 + ARLA 32
-        7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens do veículo
-        8. PNEU: Desgaste e durabilidade de pneus novos (Dianteiro/Traseiro) + Recapagens
+        1. VEÍCULO: Rateio por viagem da depreciação do Cavalo Mecânico + Implemento + Remuneração do Capital
+        2. MÃO DE OBRA: Rateio por viagem do salário base do motorista + Encargos (75%) + Benefícios + Diárias
+        3. DOCUMENTOS: Rateio por viagem do IPVA + Licenciamento + Tacógrafo
+        4. SEGUROS: Rateio por viagem do seguro do Veículo + Implemento
+        5. MANUTENÇÃO: Custo por Km de manutenção preventiva/corretiva
+        6. COMBUSTÍVEL: Consumo direto de Diesel S10 + ARLA 32 na viagem
+        7. LUBRIFICANTE E LAVAGEM: Custo por Km de troca de óleo de cárter + Lavagens
+        8. PNEU: Desgaste e durabilidade de pneus novos/recapados por Km
         9. LUCRO: Margem de Lucro do Transportador (10%)
-        10. PIS / COFINS: Impostos incidentes sobre o frete (9,25%)
+        10. PIS / COFINS: Impostos incidentes sobre o frete da viagem (9,25%)
 
-        === DIFESTAÇÃO DE TIPOLOGIA DE OPERAÇÃO ===
-        - DIRETA: Operação ponto a ponto FTL tradicional sem intermediários.
-        - CONSOLIDADA: Operação com transbordo/consolidação em HUB ou CD intermediário.
-        - REDESPACHO: Operação com entrega fracionada ou Milk Run de distribuição final.
+        === TIPOLOGIAS DE OPERAÇÃO ===
+        - DIRETA: Operação ponto a ponto FTL tradicional.
+        - CONSOLIDADA: Operação com transbordo/consolidação em HUB intermediário.
+        - REDESPACHO: Operação com entrega fracionada ou Milk Run local.
 
         === REGRAS DE APRESENTAÇÃO ===
-        - Identifique explicitamente se a rota consultada é Direta, Consolidada ou Redespacho.
-        - Monte uma TABELA DE RESUMO com o valor em R$ e a % de representatividade de cada um dos 10 pilares em relação ao custo total da viagem.
-        - Utilize apenas os parâmetros cadastrados nas abas Apoio_FIPE, Parametros_Custos e Rotas_Ativas.
-        - Para consultas de rotas específicas, utilize os dados de [TABELA REAL - TOP ROTAS ABAIXO DA ANTT].
+        - Apresente SEMPRE a tabela de composição na escala DE FRETE POR VIAGEM (R$/VIAGEM).
+        - Indique explicitamente se a rota consultada é Direta, Consolidada ou Redespacho.
         - Se o usuário pedir para gerar uma base ou simulação em lote, responda em formato de Tabela Markdown (separada por |).
 
         DADOS DE CONSULTA DA BASE NATURA: {contexto_ia_expandido}"""
@@ -1371,8 +1358,8 @@ if not df_rotas_bruta.empty:
                 st.markdown(m["content"])
 
         pergunta = st.chat_input(
-            "Ex: Monte o Should Cost detalhado da rota Benevides x Uberlândia com"
-            " os 10 pilares, tipologia da operação e a quantidade de viagens por mês."
+            "Ex: Monte o Should Cost detalhado por viagem da rota Benevides x Uberlândia com"
+            " os 10 pilares, tipologia da operação e quantidade de viagens por mês."
         )
         if pergunta:
             st.chat_message("user").markdown(pergunta)
