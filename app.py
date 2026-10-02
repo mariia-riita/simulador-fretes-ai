@@ -25,7 +25,7 @@ st.markdown(
     h1, h2, h3, h4, h5, h6, p, label, button, .stButton>button {
         font-family: 'Poppins', sans-serif !important;
     }
-    
+
     /* Legenda do Mapa Logístico */
     .legenda-mapa {
         display: flex;
@@ -56,7 +56,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- 2. CONSTANTES E CONEXÕES (LINKS ORIGINAIS MANTIDOS) ---
+# --- 2. CONSTANTES E CONEXÕES ---
 CHAVE_API_GEMINI = st.secrets["GEMINI_API_KEY"]
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/12TSlwkvaklIWr4NBkAeM11vSfj9K_ycFZzqyGW9ImX0/edit?usp=sharing"
 LINK_PLANILHA_SIMULACOES = "https://docs.google.com/spreadsheets/d/1o-cZbP27_Y0nUVvwdn2lT7q2AFja0MfLlexREF8f2Vc/edit?usp=sharing"
@@ -759,7 +759,7 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("🚨 Coluna de Origem não encontrada!")
 
-        # 🗺️ MAPA LOGÍSTICO DENSIDADE + LINHAS COM A MESMA COR DE DENSIDADE (SEM AZUL CIANO)
+        # 🗺️ MAPA LOGÍSTICO INTERATIVO COM TOOLTIP (MOUSE OVER E CLIQUE)
         with aba_mapa:
             col_lat_o = encontrar_coluna(df_rotas, ["LAT"], excluir=["DEST"])
             col_lon_o = encontrar_coluna(df_rotas, ["LON"], excluir=["DEST"])
@@ -789,14 +789,26 @@ if not df_rotas_bruta.empty:
                         df_mapa,
                         ["DESCRICAO", "NOME", "ORIGEM", "ZONA_DE_TRANSPORTE_ORIGEM"],
                     )
+                    col_destino_nome = col_d_global or encontrar_coluna(
+                        df_mapa,
+                        ["DESCRICAO", "NOME", "DESTINO", "ZONA_DE_TRANSPORTE_DESTINO"],
+                    )
+
                     if col_origem_nome:
                         s_orig_mapa = extrair_series(df_mapa, col_origem_nome)
                         contagem_origem = s_orig_mapa.value_counts().to_dict()
                         df_mapa["densidade_origem"] = (
                             s_orig_mapa.map(contagem_origem).fillna(1)
                         )
+                        df_mapa["ORIGEM_NOME_DISP"] = s_orig_mapa
                     else:
                         df_mapa["densidade_origem"] = 1
+                        df_mapa["ORIGEM_NOME_DISP"] = "Origem Desconhecida"
+
+                    if col_destino_nome:
+                        df_mapa["DESTINO_NOME_DISP"] = extrair_series(df_mapa, col_destino_nome)
+                    else:
+                        df_mapa["DESTINO_NOME_DISP"] = "Destino Desconhecido"
 
                     max_dens = df_mapa["densidade_origem"].max()
 
@@ -855,11 +867,29 @@ if not df_rotas_bruta.empty:
                     visao = pdk.ViewState(
                         latitude=-15.78, longitude=-47.92, zoom=3.5, pitch=40
                     )
+
+                    # Configuração de Tooltip Flutuante para Hover/Clique
+                    tooltip_mapa = {
+                        "html": "<b>📍 Origem:</b> {ORIGEM_NOME_DISP}<br/>"
+                                "<b>🎯 Destino:</b> {DESTINO_NOME_DISP}<br/>"
+                                "<b>🚛 Rotas no Fluxo:</b> {densidade_origem}",
+                        "style": {
+                            "backgroundColor": "#1e1e1e",
+                            "color": "white",
+                            "fontFamily": "Poppins, sans-serif",
+                            "padding": "12px",
+                            "borderRadius": "8px",
+                            "border": "1px solid #FF6600",
+                            "fontSize": "13px"
+                        }
+                    }
+
                     st.pydeck_chart(
                         pdk.Deck(
                             layers=[camada_origens, camada_destinos, camada_arcos],
                             initial_view_state=visao,
                             map_style=None,
+                            tooltip=tooltip_mapa,
                         )
                     )
                 else:
@@ -867,11 +897,11 @@ if not df_rotas_bruta.empty:
             else:
                 st.error("⚠️ Colunas de Latitude/Longitude não encontradas!")
 
-        # 📋 ABA: SHOULD COST DINÂMICO (DETALHAMENTO RATEADO POR VIAGEM & MENSAL)
+        # 📋 ABA: SHOULD COST DINÂMICO
         with aba_should_cost:
             st.markdown("### 📋 SIMULADOR DE FRETES (Metodologia Oficial)")
             st.caption(
-                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT."
+                "Cálculo exato dos 10 Pilares do Should Cost RATEADOS POR VIAGEM, Tipo de Operação (Direta/Consolidada/Redespacho), Frete Natura e ANTT (Coluna AV)."
             )
 
             if "ROTA_NOME" in df_rotas.columns:
@@ -889,7 +919,7 @@ if not df_rotas_bruta.empty:
                 if not df_foco.empty:
                     df_rota_foco = df_foco.iloc[0]
 
-                    # 1. IDENTIFICAÇÃO DO TIPO DE OPERAÇÃO / TIPOLOGIA (DIRETA, CONSOLIDADA, REDESPACHO)
+                    # 1. IDENTIFICAÇÃO DO TIPO DE OPERAÇÃO / TIPOLOGIA
                     tipo_op_val = "DIRETA"
                     col_tipologia_found = encontrar_coluna(
                         df_rotas,
@@ -969,38 +999,40 @@ if not df_rotas_bruta.empty:
                                 frete_natura_atual = v_nat
                                 break
 
-                    # 5. FRETE MÍNIMO ANTT (BUSCA DIRETA COLUNA AV OU FÓRMULA OFICIAL)
+                    # 5. FRETE MÍNIMO ANTT (CORREÇÃO DA COLUNA AV E FALLBACKS)
                     frete_antt = 0.0
 
-                    col_antt_found = encontrar_coluna(
-                        df_rotas,
-                        [
-                            "FRETE MINIMO",
-                            "FRETE MÍNIMO",
-                            "PISO MÍNIMO",
-                            "PISO MINIMO",
-                            "PISO ANTT",
-                            "MINIMO ANTT",
-                            "MÍNIMO ANTT",
-                            "FRETE ANTT",
-                            "ANTT",
-                        ],
-                        excluir=["DIF", "VARIAÇÃO", "VARIACAO", "SPEND", "STATUS", "DIFERENÇA"],
-                    )
-
-                    if col_antt_found and col_antt_found in df_rota_foco.index:
-                        val_antt_col = limpar_numero_br_correto(df_rota_foco.get(col_antt_found, 0))
-                        if val_antt_col > 0:
-                            frete_antt = val_antt_col
-
-                    if frete_antt == 0.0 and len(df_rota_foco) > 47:
-                        try:
-                            val_av = limpar_numero_br_correto(df_rota_foco.iloc[47])
+                    # TENTATIVA 1: Pegar exatamente a Coluna AV (Índice 47) direto da planilha bruta original
+                    if df_rotas_bruta is not None and len(df_rotas_bruta.columns) > 47:
+                        coluna_av_nome_bruta = str(df_rotas_bruta.columns[47]).replace("\n", "").replace("\r", "").strip().upper()
+                        if coluna_av_nome_bruta in df_rota_foco.index:
+                            val_av = limpar_numero_br_correto(df_rota_foco[coluna_av_nome_bruta])
                             if val_av > 0:
                                 frete_antt = val_av
-                        except:
-                            pass
 
+                    # TENTATIVA 2: Busca por palavra-chave da coluna ANTT no DataFrame formatado
+                    if frete_antt == 0.0:
+                        col_antt_found = encontrar_coluna(
+                            df_rotas,
+                            [
+                                "FRETE MINIMO",
+                                "FRETE MÍNIMO",
+                                "PISO MÍNIMO",
+                                "PISO MINIMO",
+                                "PISO ANTT",
+                                "MINIMO ANTT",
+                                "MÍNIMO ANTT",
+                                "FRETE ANTT",
+                                "ANTT",
+                            ],
+                            excluir=["DIF", "VARIAÇÃO", "VARIACAO", "SPEND", "STATUS", "DIFERENÇA", "KM", "TON", "%"],
+                        )
+                        if col_antt_found and col_antt_found in df_rota_foco.index:
+                            val_antt_col = limpar_numero_br_correto(df_rota_foco.get(col_antt_found, 0))
+                            if val_antt_col > 0:
+                                frete_antt = val_antt_col
+
+                    # TENTATIVA 3: Tabela Piso Mínimo ANTT por fórmula oficial (caso esteja em branco)
                     if frete_antt == 0.0 and km_rota > 0:
                         if perfil_veic_str == "TRUCK":
                             var_antt, fixo_antt = 4.970, 523.33
@@ -1076,7 +1108,7 @@ if not df_rotas_bruta.empty:
                     seg_i = 2610.00 if perfil_veic_str == "CARRETA" else preco_i * 0.048 / 12.0
                     seguros_mes = seg_v + seg_i
 
-                    # CÁLCULO DOS 10 PILARES RATEADOS POR VIAGEM (EXATO R$/VIAGEM)
+                    # CÁLCULO DOS 10 PILARES RATEADOS POR VIAGEM (R$/VIAGEM)
                     veiculo_viagem = veiculo_mes / viagens_mes
                     mao_obra_viagem = mao_obra_mes / viagens_mes
                     docs_viagem = docs_mes / viagens_mes
@@ -1119,7 +1151,7 @@ if not df_rotas_bruta.empty:
                     # EXIBIÇÃO PAINEL PRINCIPAL
                     st.write("---")
                     c1, c2, c3, c4 = st.columns(4)
-                    
+
                     c1.metric(
                         "Tipo de Operação",
                         tipo_op_display,
@@ -1367,7 +1399,6 @@ if not df_rotas_bruta.empty:
             with st.chat_message("assistant"):
                 try:
                     with st.spinner("Analisando componentes de custo e mercado..."):
-                        # Enriquecimento dinamico com o valor atualizado do diesel na sidebar
                         prompt_enriquecido = f"""
                         [INFORMAÇÃO DO SISTEMA EM TEMPO REAL]:
                         - Preço atual do Diesel S10 ajustado pelo usuário na interface: R$ {diesel_medio_atual:.2f}/L.
